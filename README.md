@@ -1,5 +1,8 @@
 # ⚔️ SF Gilden-Scanner
 
+[![Docker Hub](https://img.shields.io/docker/v/dasaod/sf-guildscanner?label=Docker%20Hub&logo=docker)](https://hub.docker.com/r/dasaod/sf-guildscanner)
+[![GitHub](https://img.shields.io/badge/GitHub-DasAoD%2Fsf--guildscanner-blue?logo=github)](https://github.com/DasAoD/sf-guildscanner)
+
 Findet angreifbare Gilden in Shakes & Fidget – basierend auf Mitgliederanzahl und den einzelnen Leveln der Mitglieder.
 
 ## Funktionsweise
