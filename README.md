@@ -99,3 +99,13 @@ sfguild-scanner/
 - Der Container braucht Zugang zu `sfgame.net` und `sso.playa-games.com`
 - Erster Build dauert 3-5 Min. (Rust kompiliert alle Dependencies)
 - Zwischen API-Requests wird 400-500ms Pause gehalten (Rate-Limiting)
+
+## Credits
+
+- [sf-api](https://github.com/the-marenga/sf-api) by [the-marenga](https://github.com/the-marenga) — Rust library for the Shakes & Fidget API
+
+---
+
+## License
+
+[MIT](LICENSE)
