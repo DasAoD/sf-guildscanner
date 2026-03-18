@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  sfguild-scanner:
+    image: dasaod/sf-guildscanner:latest
+    container_name: sfguild-scanner
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - RUST_LOG=info
+    restart: unless-stopped

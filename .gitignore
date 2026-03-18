@@ -1,0 +1,19 @@
+# Rust build artifacts
+target/
+
+# Scan data (contains personal account/guild data)
+data/
+
+# Environment files
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

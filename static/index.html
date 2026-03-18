@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⚔️ SF Gilden-Scanner</title>
+<link href="https://fonts.googleapis.com/css2?family=MedievalSharp&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #1a1412; --bg2: #2a2118; --bg3: #352a1f;
+    --border: #5a4a35; --gold: #d4a743; --gold-l: #f0d078; --gold-d: #9a7a2a;
+    --red: #c44040; --green: #4a9a4a; --blue: #4a7ab0;
+    --txt: #e8dcc8; --dim: #9a8a70; --bright: #fff5e0;
+    --ff: 'MedievalSharp', cursive; --fb: 'Source Sans 3', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--fb); background: var(--bg); color: var(--txt); min-height: 100vh;
+    background-image: radial-gradient(ellipse at 20% 0%, rgba(212,167,67,0.05) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 100%, rgba(100,60,20,0.06) 0%, transparent 50%); }
+
+  header { text-align:center; padding:1.5rem 1rem 1rem; border-bottom:2px solid var(--border);
+    background: linear-gradient(180deg, rgba(90,74,53,0.12) 0%, transparent 100%); }
+  header h1 { font-family:var(--ff); font-size:2.2rem; color:var(--gold);
+    text-shadow:0 2px 8px rgba(212,167,67,0.25); }
+  header p { color:var(--dim); font-size:0.9rem; margin-top:0.2rem; }
+
+  .c { max-width:1200px; margin:0 auto; padding:1.2rem; }
+  .card { background:var(--bg2); border:1px solid var(--border); border-radius:8px;
+    padding:1.3rem; margin-bottom:1.1rem; }
+  .card h2 { font-family:var(--ff); color:var(--gold); font-size:1.25rem; margin-bottom:0.8rem;
+    display:flex; align-items:center; gap:0.4rem; }
+
+  .form-row { display:flex; gap:0.6rem; align-items:end; flex-wrap:wrap; }
+  .fg { display:flex; flex-direction:column; gap:0.25rem; flex:1; min-width:120px; }
+  label { font-size:0.75rem; color:var(--dim); text-transform:uppercase; letter-spacing:0.07em; }
+  input,select { background:var(--bg); border:1px solid var(--border); border-radius:4px;
+    padding:0.5rem 0.7rem; color:var(--txt); font-family:var(--fb); font-size:0.9rem; }
+  input:focus,select:focus { outline:none; border-color:var(--gold); }
+  input[type=number] { width:100px; }
+  input[type=checkbox] { width:auto; accent-color:var(--gold); }
+
+  button { font-family:var(--fb); font-weight:700; font-size:0.85rem; padding:0.5rem 1.2rem;
+    border-radius:4px; border:1px solid var(--gold-d); cursor:pointer; white-space:nowrap;
+    background:linear-gradient(180deg,var(--gold),var(--gold-d)); color:var(--bg); transition:all 0.12s; }
+  button:hover { filter:brightness(1.1); transform:translateY(-1px); }
+  button:disabled { opacity:0.35; cursor:not-allowed; transform:none; filter:none; }
+  .btn-s { background:var(--bg); color:var(--txt); border-color:var(--border); }
+  .btn-s:hover { border-color:var(--gold-d); }
+  .btn-d { background:linear-gradient(180deg,var(--red),#8a2020); border-color:var(--red); color:#fff; }
+
+  table { width:100%; border-collapse:collapse; font-size:0.85rem; }
+  th { background:rgba(90,74,53,0.2); color:var(--gold-l); font-weight:600; text-align:left;
+    padding:0.5rem 0.6rem; border-bottom:2px solid var(--border); cursor:pointer; user-select:none; white-space:nowrap; }
+  th:hover { color:var(--bright); }
+  th .arrow { font-size:0.7rem; opacity:0.5; }
+  td { padding:0.45rem 0.6rem; border-bottom:1px solid rgba(90,74,53,0.15); white-space:nowrap; }
+  tr:hover td { background:rgba(212,167,67,0.03); }
+  .tbl-wrap { overflow-x:auto; }
+
+  .pos { color:#6cc06c; } .neg { color:#e06060; } .neu { color:var(--dim); }
+  .badge { display:inline-block; padding:0.1rem 0.4rem; border-radius:3px; font-size:0.75rem; font-weight:600; }
+  .b-grn { background:rgba(74,154,74,0.15); color:#6cc06c; border:1px solid rgba(74,154,74,0.25); }
+  .b-red { background:rgba(196,64,64,0.15); color:#e06060; border:1px solid rgba(196,64,64,0.25); }
+  .b-gld { background:rgba(212,167,67,0.12); color:var(--gold); border:1px solid rgba(212,167,67,0.2); }
+
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:0.6rem; margin-bottom:0.8rem; }
+  .stat { background:var(--bg); border:1px solid var(--border); border-radius:5px; padding:0.6rem; text-align:center; }
+  .stat .v { font-family:var(--ff); font-size:1.4rem; color:var(--gold); }
+  .stat .l { font-size:0.7rem; color:var(--dim); text-transform:uppercase; letter-spacing:0.05em; margin-top:0.1rem; }
+
+  .progress { margin:1rem 0; }
+  .progress-bar { background:var(--bg); border:1px solid var(--border); border-radius:4px; height:24px; overflow:hidden; position:relative; }
+  .progress-fill { height:100%; background:linear-gradient(90deg,var(--gold-d),var(--gold)); transition:width 0.3s; border-radius:3px; }
+  .progress-text { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:0.78rem; font-weight:600; color:var(--bright); text-shadow:0 1px 3px rgba(0,0,0,0.8); }
+  .progress-msg { font-size:0.82rem; color:var(--dim); margin-top:0.4rem; }
+
+  .steps { display:flex; margin-bottom:1.2rem; border:1px solid var(--border); border-radius:5px; overflow:hidden; }
+  .step { flex:1; padding:0.5rem; text-align:center; font-size:0.78rem; font-weight:600;
+    background:var(--bg2); color:var(--dim); border-right:1px solid var(--border); }
+  .step:last-child { border-right:none; }
+  .step.active { background:rgba(212,167,67,0.1); color:var(--gold); }
+  .step.done { background:rgba(74,154,74,0.08); color:#6cc06c; }
+
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex;
+    align-items:center; justify-content:center; z-index:100; backdrop-filter:blur(3px); }
+  .modal { background:var(--bg2); border:1px solid var(--gold-d); border-radius:8px;
+    padding:1.3rem; max-width:700px; width:92%; max-height:80vh; overflow-y:auto; }
+  .modal h3 { font-family:var(--ff); color:var(--gold); font-size:1.15rem; margin-bottom:0.8rem; }
+
+  .level-bar { display:inline-block; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle; }
+
+  .hidden { display:none!important; }
+  @media(max-width:600px) { header h1{font-size:1.5rem} .form-row{flex-direction:column} .fg{min-width:100%} }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚔️ SF Gilden-Scanner</h1>
+  <p>Finde angreifbare Gilden – nach Mitgliedern &amp; Level</p>
+</header>
+<div class="c">
+
+  <div class="steps">
+    <div class="step active" id="s1">1. Login</div>
+    <div class="step" id="s2">2. Charakter</div>
+    <div class="step" id="s3">3. Scan</div>
+    <div class="step" id="s4">4. Ergebnisse</div>
+  </div>
+
+  <!-- LOGIN -->
+  <div class="card" id="loginCard">
+    <h2>🔑 SSO Login</h2>
+    <div class="form-row">
+      <div class="fg"><label>Benutzername</label><input type="text" id="user" autocomplete="username"></div>
+      <div class="fg"><label>Passwort</label><input type="password" id="pass" autocomplete="current-password"></div>
+      <button id="loginBtn" onclick="doLogin()">Einloggen</button>
+    </div>
+    <div id="loginErr" class="neg" style="font-size:0.82rem;margin-top:0.5rem"></div>
+  </div>
+
+  <!-- CHARACTER SELECT -->
+  <div class="card hidden" id="charCard">
+    <h2>🧙 Charakter wählen</h2>
+    <div id="charList"></div>
+  </div>
+
+  <!-- OWN GUILD -->
+  <div class="card hidden" id="guildCard">
+    <h2>🏰 <span id="guildName"></span></h2>
+    <div class="stats" id="guildStats"></div>
+    <details>
+      <summary style="cursor:pointer;color:var(--dim);font-size:0.82rem">Mitglieder anzeigen</summary>
+      <div class="tbl-wrap" style="margin-top:0.4rem"><table id="ownMembers"><thead><tr><th>Name</th><th>Level</th></tr></thead><tbody></tbody></table></div>
+    </details>
+  </div>
+
+  <!-- SCAN -->
+  <div class="card hidden" id="scanCard">
+    <h2>🔍 Scan</h2>
+    <p style="font-size:0.82rem;color:var(--dim);margin-bottom:0.6rem">
+      Scannt <strong>um eure Platzierung</strong> herum (oben: <strong>20 Ränge</strong>, unten: <strong>Down-Limit</strong>).<br>
+      Optional kann nach oben zusätzlich über die <strong>Ehre-Regel</strong> (≤ 3000 Ehre über euch) erweitert werden.
+    </p>
+
+    <div class="form-row" style="margin-bottom:0.8rem">
+      <div class="fg"><label>Down-Limit (unter euch)</label><input type="number" id="downLimit" value="300" min="0" max="50000"></div>
+      <div class="fg" style="flex:0;min-width:auto;flex-direction:row;align-items:center;gap:0.4rem;padding-bottom:0.25rem">
+        <input type="checkbox" id="honorUp" checked><label for="honorUp" style="white-space:nowrap">Honor-up-scan</label>
+      </div>
+      <div class="fg" style="flex:0;min-width:auto;flex-direction:row;align-items:center;gap:0.4rem;padding-bottom:0.25rem">
+        <input type="checkbox" id="strictMode" checked><label for="strictMode" style="white-space:nowrap">Strikt-Modus</label>
+      </div>
+      <div class="fg" style="flex:0;min-width:auto;flex-direction:row;align-items:center;gap:0.4rem;padding-bottom:0.25rem">
+        <input type="checkbox" id="strictTopN" checked><label for="strictTopN" style="white-space:nowrap">Top-N Strikt</label>
+      </div>
+      <div class="fg"><label>Max Extra-Seiten (oben)</label><input type="number" id="extraUpPages" value="10" min="0" max="50"></div>
+    </div>
+
+    <div id="scanExisting" class="hidden" style="margin-bottom:0.8rem;padding:0.6rem;background:rgba(74,154,74,0.08);border:1px solid rgba(74,154,74,0.2);border-radius:4px;font-size:0.82rem;color:#6cc06c">
+      📁 Vorhandene Scan-Daten gefunden vom <span id="scanDate"></span>.
+      <button class="btn-s" style="margin-left:0.5rem;padding:0.2rem 0.6rem;font-size:0.78rem" onclick="loadExisting()">Laden</button>
+    </div>
+
+    <div class="form-row" style="gap:0.6rem">
+      <button id="scanBtn" onclick="doScan()">⚔️ Scan starten</button>
+      <button id="abortBtn" class="btn-d" onclick="doAbort()" disabled>⛔ Abbrechen</button>
+    </div>
+
+    <div id="progressArea" class="progress hidden">
+      <div class="progress-bar"><div class="progress-fill" id="pFill" style="width:0%"></div><div class="progress-text" id="pText"></div></div>
+      <div class="progress-msg" id="pMsg"></div>
+    </div>
+
+  </div>
+
+  <!-- FILTER + RESULTS -->
+  <div class="card hidden" id="resultsCard">
+    <h2>📋 Ergebnisse <span id="rCount" style="font-family:var(--fb);font-size:0.8rem;color:var(--dim);margin-left:auto"></span></h2>
+
+    <div class="form-row" style="margin-bottom:0.8rem">
+      <div class="fg"><label>Max Mitglieder</label><input type="number" id="fMembers" placeholder="alle" min="1" max="50"></div>
+      <div class="fg"><label>Max höchstes Level</label><input type="number" id="fMaxLvl" placeholder="alle" min="1"></div>
+      <div class="fg" style="flex:0;min-width:auto;flex-direction:row;align-items:center;gap:0.4rem;padding-bottom:0.25rem">
+        <input type="checkbox" id="fHideAtk"><label for="fHideAtk" style="white-space:nowrap">Angegriffene ausblenden</label>
+      </div>
+      <div class="fg" style="flex:0;min-width:auto;flex-direction:row;align-items:center;gap:0.4rem;padding-bottom:0.25rem">
+        <input type="checkbox" id="fStrict" checked><label for="fStrict" style="white-space:nowrap">Nur Strikt OK</label>
+      </div>
+      <button onclick="applyFilter()">Filtern</button>
+      <button class="btn-s" onclick="location.href='/api/export'" title="Alle Daten als JSON exportieren">📥 Export</button>
+    </div>
+
+    <div class="tbl-wrap">
+      <table id="rTable">
+        <thead><tr>
+          <th onclick="sortBy('name')">Gilde <span class="arrow" id="sort_name"></span></th>
+          <th onclick="sortBy('member_count')">Mitgl. <span class="arrow" id="sort_member_count"></span></th>
+          <th onclick="sortBy('max_level')">Max Lvl <span class="arrow" id="sort_max_level"></span></th>
+          <th onclick="sortBy('min_level')">Min Lvl <span class="arrow" id="sort_min_level"></span></th>
+          <th onclick="sortBy('avg_level')">Ø Level <span class="arrow" id="sort_avg_level"></span></th>
+          <th onclick="sortBy('rank')">Rang <span class="arrow" id="sort_rank"></span></th>
+          <th onclick="sortBy('honor')">Ehre <span class="arrow" id="sort_honor"></span></th>
+          <th>Status</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="rBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="hidden" id="logoutArea" style="text-align:center;margin-top:0.8rem">
+    <button class="btn-d" onclick="doLogout()">Ausloggen</button>
+  </div>
+</div>
+
+<!-- DETAIL MODAL -->
+<div class="modal-bg hidden" id="modal" onclick="if(event.target===this)this.classList.add('hidden')">
+  <div class="modal">
+    <h3 id="mTitle"></h3>
+    <div id="mBody"></div>
+    <div style="text-align:right;margin-top:0.8rem">
+      <button class="btn-s" onclick="$('modal').classList.add('hidden')">Schließen</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+
+let results=[], ownGuild=null;
+let sortKey='rank', sortDir='asc';
+let hasScanData=false, scanDate='';
+
+function setStep(n){for(let i=1;i<=4;i++){const e=$('s'+i);e.className='step';if(i<n)e.classList.add('done');if(i===n)e.classList.add('active');}}
+
+async function api(ep,data){
+  const opts=data!==undefined
+    ?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})}
+    :{};
+  const r=await fetch('/api/'+ep,opts);
+  return r.json();
+}
+
+function fmt1(n){return (typeof n==='number'?n:0).toLocaleString('de',{minimumFractionDigits:1,maximumFractionDigits:1});}
+
+// ── LOGIN ──────────────────────────────────────────────────
+async function doLogin(){
+  const u=$('user').value.trim(), p=$('pass').value;
+  if(!u||!p)return;
+  $('loginBtn').disabled=true; $('loginErr').textContent='';
+  try{
+    const r=await api('login',{username:u,password:p});
+    if(!r.success){$('loginErr').textContent=r.error;return;}
+    showChars(r.data); setStep(2);
+  }catch(e){$('loginErr').textContent='Verbindungsfehler';}
+  finally{$('loginBtn').disabled=false;}
+}
+$('pass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+
+// ── CHARACTER ──────────────────────────────────────────────
+function showChars(chars){
+  $('loginCard').classList.add('hidden');
+  $('charCard').classList.remove('hidden');
+  const l=$('charList'); l.innerHTML='';
+  chars.forEach(c=>{
+    const b=document.createElement('button');
+    b.style.cssText='margin:0 0.4rem 0.4rem 0';
+    try{b.textContent=`${c.name} (${new URL(c.server).hostname})`;}catch(e){b.textContent=c.name;}
+    b.onclick=()=>selectChar(c.index);
+    l.appendChild(b);
+  });
+}
+
+async function selectChar(idx){
+  $('charCard').querySelectorAll('button').forEach(b=>b.disabled=true);
+  try{
+    const r=await api('select-character',{index:idx});
+    if(!r.success){alert(r.error);return;}
+    showGuild(r.data); setStep(3);
+    // Check for existing scan
+    const st=await api('status');
+    if(st.data?.has_scan_data){
+      hasScanData=true; scanDate=st.data.scan_date||'';
+      $('scanDate').textContent=scanDate;
+      $('scanExisting').classList.remove('hidden');
+    }
+  }catch(e){alert('Fehler: '+e.message);}
+}
+
+// ── OWN GUILD ──────────────────────────────────────────────
+function showGuild(g){
+  ownGuild=g;
+  $('charCard').classList.add('hidden');
+  $('guildCard').classList.remove('hidden');
+  $('scanCard').classList.remove('hidden');
+  $('logoutArea').classList.remove('hidden');
+  $('guildName').textContent=g.name;
+
+  const ownMax=Math.max(...g.members.map(m=>m.level));
+  const ownMin=Math.min(...g.members.map(m=>m.level));
+  const ownTotal=g.members.reduce((s,m)=>s+m.level,0);
+  const ownAvg=(g.member_count>0)?(ownTotal/g.member_count):0;
+  $('guildStats').innerHTML=`
+    <div class="stat"><div class="v">${g.member_count}</div><div class="l">Mitglieder</div></div>
+    <div class="stat"><div class="v">${(g.active_member_count??g.member_count)}</div><div class="l">Aktiv (24h)</div></div>
+    <div class="stat"><div class="v">${ownMax}</div><div class="l">Max Level</div></div>
+    <div class="stat"><div class="v">${ownMin}</div><div class="l">Min Level</div></div>
+    <div class="stat"><div class="v">${ownAvg.toLocaleString('de',{minimumFractionDigits:1,maximumFractionDigits:1})}</div><div class="l">Ø Level</div></div>
+    <div class="stat"><div class="v">#${g.rank}</div><div class="l">Rang</div></div>
+    <div class="stat"><div class="v">${g.honor.toLocaleString('de')}</div><div class="l">Ehre</div></div>`;
+
+  const tb=$('ownMembers').querySelector('tbody'); tb.innerHTML='';
+  [...g.members].sort((a,b)=>b.level-a.level).forEach(m=>{
+    const tr=document.createElement('tr');
+    const off=(m.offline_days!=null && m.offline_days>=1)?` <span class=\"badge b-red\" title=\"offline seit ${m.offline_days} Tagen\">off ${m.offline_days}d</span>`:'';
+    tr.innerHTML=`<td>${esc(m.name)}${off}</td><td>${m.level} ${levelBar(m.level,ownMax)}</td>`;
+    tb.appendChild(tr);
+  });
+}
+
+function levelBar(lvl,max){
+  const pct=max>0?Math.round(lvl/max*100):0;
+  const clr=pct>80?'var(--gold)':pct>50?'var(--blue)':'var(--dim)';
+  return `<span class="level-bar" style="width:${Math.max(pct,3)}px;background:${clr}"></span>`;
+}
+
+// ── SCAN ───────────────────────────────────────────────────
+async function doScan(){
+  const down=parseInt($('downLimit').value||'300');
+  const honorUp=$('honorUp').checked;
+  const strict=$('strictMode').checked;
+  const strictTopN=$('strictTopN')?$('strictTopN').checked:true;
+  const extra=parseInt($('extraUpPages').value||'10');
+
+  $('scanBtn').disabled=true;
+  $('abortBtn').disabled=false;
+  $('progressArea').classList.remove('hidden');
+  $('pMsg').classList.remove('neg');
+
+  try{
+    const r=await api('scan',{down_limit:down,honor_up_scan:honorUp,max_extra_up_pages:extra,strict_mode:strict,strict_topn:strictTopN});
+    if(!r.success){$('pMsg').textContent=r.error; $('pMsg').classList.add('neg'); $('scanBtn').disabled=false; $('abortBtn').disabled=true; return;}
+    pollProgress();
+  }catch(e){$('pMsg').textContent='Fehler: '+e.message; $('scanBtn').disabled=false; $('abortBtn').disabled=true;}
+}
+
+async function doAbort(){
+  $('abortBtn').disabled=true;
+  try{
+    const r=await api('scan/abort',{});
+    if(!r.success){$('pMsg').textContent=r.error; $('pMsg').classList.add('neg'); return;}
+    $('pMsg').textContent=r.data||'Abbruch angefordert...';
+  }catch(e){$('pMsg').textContent='Fehler: '+e.message; $('pMsg').classList.add('neg');}
+}
+
+async function pollProgress(){
+  try{
+    const r=await api('progress');
+    if(!r.success)return;
+    const p=r.data;
+    const pct=p.total>0?Math.round(p.current/p.total*100):0;
+
+    if(p.phase==='hof'){
+      $('pFill').style.width=pct+'%';
+      $('pText').textContent=`HoF: ${p.current} / ${p.total} Seiten`;
+    }else if(p.phase==='details'){
+      $('pFill').style.width=pct+'%';
+      $('pText').textContent=`${p.current} / ${p.total} Gilden`;
+    }else if(p.phase==='done' || p.phase==='aborted'){
+      $('pFill').style.width='100%';
+      $('pText').textContent=p.phase==='done'?'✓ Fertig!':'⚠️ Abgebrochen';
+      $('scanBtn').disabled=false;
+      $('abortBtn').disabled=true;
+      setStep(4);
+      applyFilter();
+      $('pMsg').textContent=p.message;
+      return;
+    }
+
+    $('pMsg').textContent=p.message;
+    if(p.running) setTimeout(pollProgress, 800);
+    else {
+      $('scanBtn').disabled=false;
+      $('abortBtn').disabled=true;
+      if(p.phase==='error') $('pMsg').classList.add('neg');
+    }
+  }catch(e){setTimeout(pollProgress,2000);}
+}
+
+async function loadExisting(){
+  applyFilter();
+}
+
+// ── FILTER & RESULTS ───────────────────────────────────────
+async function applyFilter(){
+  const maxM=$('fMembers').value?parseInt($('fMembers').value):null;
+  const maxLvl=$('fMaxLvl').value?parseInt($('fMaxLvl').value):null;
+  const hideAtk=$('fHideAtk').checked;
+  const strictOnly=$('fStrict').checked;
+
+  try{
+    const r=await api('results',{max_members:maxM,max_highest_level:maxLvl,hide_attacked:hideAtk,strict_only:strictOnly});
+    if(!r.success){alert(r.error);return;}
+    results=r.data.guilds;
+    ownGuild=r.data.own_guild;
+    // computed fields for UI (no backend changes needed)
+    results.forEach(g=>{ g.avg_level = (g.member_count>0)?(g.total_level/g.member_count):0; });
+    if(ownGuild && Array.isArray(ownGuild.members)){
+      const sum=ownGuild.members.reduce((s,m)=>s+m.level,0);
+      ownGuild.avg_level = (ownGuild.member_count>0)?(sum/ownGuild.member_count):0;
+    }
+    const strictHint = strictOnly ? ' (Strikt OK)' : '';
+    $('rCount').textContent=`${r.data.filtered_count} / ${r.data.total_attackable} Kandidaten${strictHint} | Scan: ${r.data.scanned_at}`;
+    $('resultsCard').classList.remove('hidden');
+    setStep(4);
+    renderTable();
+  }catch(e){alert('Fehler: '+e.message);}
+}
+
+function renderTable(){
+  const tb=$('rBody'); tb.innerHTML='';
+  // Update sort arrows
+  document.querySelectorAll('th .arrow').forEach(a=>a.textContent='');
+  const arrow=$('sort_'+sortKey);
+  if(arrow)arrow.textContent=sortDir==='asc'?' ▲':' ▼';
+
+  const sorted=[...results].sort((a,b)=>{
+    let va=a[sortKey],vb=b[sortKey];
+    if(typeof va==='string'){va=va.toLowerCase();vb=vb.toLowerCase();}
+    if(va<vb)return sortDir==='asc'?-1:1;
+    if(va>vb)return sortDir==='asc'?1:-1;
+    return 0;
+  });
+
+  const ownAvg=(ownGuild && typeof ownGuild.avg_level==='number')?ownGuild.avg_level:(ownGuild.member_count>0?ownGuild.members.reduce((s,m)=>s+m.level,0)/ownGuild.member_count:0);
+  const ownMax=Math.max(...ownGuild.members.map(m=>m.level));
+
+  sorted.forEach(g=>{
+    const tr=document.createElement('tr');
+    const avgDiff=(g.avg_level??((g.member_count>0)?(g.total_level/g.member_count):0)) - ownAvg;
+    const avgCls=avgDiff<0?'pos':avgDiff>0?'neg':'neu';
+    const memberDiff=g.member_count-ownGuild.member_count;
+    const memberCls=memberDiff<0?'pos':memberDiff>0?'neg':'neu';
+    const maxCls=g.max_level<ownMax?'pos':g.max_level>ownMax?'neg':'neu';
+    const atk=g.is_attacked?'<span class="badge b-red">⚔ Angegriffen</span>':'<span class="badge b-grn">Frei</span>';
+    const strictBadge=g.strict_evaluated?(g.strict_beatable?'<span class="badge b-grn">✔ Strikt</span>':'<span class="badge b-red">✖ Strikt</span>'):'';
+
+    tr.innerHTML=`
+      <td><strong>${esc(g.name)}</strong></td>
+      <td class="${memberCls}">${g.member_count}</td>
+      <td class="${maxCls}">${g.max_level}</td>
+      <td>${g.min_level}</td>
+      <td class="${avgCls}">${(g.avg_level??0).toLocaleString('de',{minimumFractionDigits:1,maximumFractionDigits:1})}</td>
+      <td>#${g.rank}</td>
+      <td>${g.honor.toLocaleString('de')}</td>
+      <td>${atk} ${strictBadge?'<br>'+strictBadge:''}</td>
+      <td><button class="btn-s" style="padding:0.25rem 0.5rem;font-size:0.75rem" data-g="${esc(g.name)}" onclick="showDetail(this.dataset.g)">👁</button></td>`;
+    tb.appendChild(tr);
+  });
+}
+
+function sortBy(key){
+  if(sortKey===key)sortDir=sortDir==='asc'?'desc':'asc';
+  else{sortKey=key;sortDir=key==='name'?'asc':'asc';}
+  renderTable();
+}
+
+// ── DETAIL MODAL ───────────────────────────────────────────
+async function showDetail(name){
+  $('mTitle').textContent='Lade...';
+  $('mBody').innerHTML='<div style="text-align:center;color:var(--dim)">⏳</div>';
+  $('modal').classList.remove('hidden');
+
+  // Find in results first
+  const cached=results.find(g=>g.name===name);
+  if(cached){renderDetail(cached);return;}
+
+  try{
+    const r=await api('guild-details',{name});
+    if(!r.success){$('mTitle').textContent='Fehler';$('mBody').textContent=r.error;return;}
+    renderDetail(r.data);
+  }catch(e){$('mTitle').textContent='Fehler';$('mBody').textContent=e.message;}
+}
+
+function renderDetail(g){
+  $('mTitle').textContent=`🏰 ${g.name}`;
+  const maxLvl=g.max_level||Math.max(...g.members.map(m=>m.level));
+
+  // Compare with own guild
+  const ownAvg=(ownGuild && typeof ownGuild.avg_level==='number')?ownGuild.avg_level:(ownGuild.member_count>0?ownGuild.members.reduce((s,m)=>s+m.level,0)/ownGuild.member_count:0);
+  const ownMax=Math.max(...ownGuild.members.map(m=>m.level));
+  const gAvg=(g.member_count>0)?(g.total_level/g.member_count):0;
+
+  let cmp='';
+  if(ownGuild){
+    const avgDiff=gAvg-ownAvg;
+    const memberDiff=g.member_count-ownGuild.member_count;
+    const maxDiff=maxLvl-ownMax;
+    cmp=`<div style="margin-bottom:0.8rem;padding:0.5rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.82rem">
+      <strong style="color:var(--gold)">Vergleich mit ${esc(ownGuild.name)}:</strong><br>
+      Mitglieder: <span class="${memberDiff<=0?'pos':'neg'}">${memberDiff>0?'+':''}${memberDiff}</span> |
+      Ø Level: <span class="${avgDiff<=0?'pos':'neg'}">${avgDiff>0?'+':''}${fmt1(avgDiff)}</span> |
+      Max Level: <span class="${maxDiff<=0?'pos':'neg'}">${maxDiff>0?'+':''}${maxDiff}</span>
+    </div>`;
+  }
+
+
+  let strictHtml='';
+  if(g.strict_evaluated){
+    const mode=g.strict_topn?' (Top-N)':'';
+    const badge=g.strict_beatable?'<span class="badge b-grn">✔ Strikt besiegbar</span>':'<span class="badge b-red">✖ Strikt NICHT</span>';
+    const reason=(!g.strict_beatable && g.strict_fail_reason)?`<div style="margin-top:0.35rem;color:var(--dim)">${esc(g.strict_fail_reason)}</div>`:'';
+    strictHtml=`<div style="margin-bottom:0.8rem;padding:0.5rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.82rem">
+      <strong style="color:var(--gold)">Strikt-Modus${mode}:</strong> ${badge}<br>
+      Eigene aktiv (24h): <span class="b-gld badge">${g.strict_own_active_members}</span> | Gegner: <span class="b-gld badge">${g.member_count}</span>${g.strict_topn ? (' | Top-N: <span class="b-gld badge">'+g.strict_topn_n+'</span>') : ''}
+      ${reason}
+    </div>`;
+  }
+
+  const rows=g.members.sort((a,b)=>b.level-a.level).map(m=>
+    `<tr><td>${esc(m.name)}</td><td>${m.level} ${levelBar(m.level,maxLvl)}</td></tr>`
+  ).join('');
+
+  $('mBody').innerHTML=`
+    <div class="stats">
+      <div class="stat"><div class="v">${g.member_count}</div><div class="l">Mitglieder</div></div>
+      <div class="stat"><div class="v">${g.max_level}</div><div class="l">Max Level</div></div>
+      <div class="stat"><div class="v">${g.min_level}</div><div class="l">Min Level</div></div>
+      <div class="stat"><div class="v">${fmt1((g.member_count>0)?(g.total_level/g.member_count):0)}</div><div class="l">Ø Level</div></div>
+      <div class="stat"><div class="v">#${g.rank}</div><div class="l">Rang</div></div>
+      <div class="stat"><div class="v">${g.honor.toLocaleString('de')}</div><div class="l">Ehre</div></div>
+    </div>
+    ${cmp}
+    ${strictHtml}
+    <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Level</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+// ── LOGOUT ─────────────────────────────────────────────────
+async function doLogout(){await api('logout',{});location.reload();}
+
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+
+(function(){
+  const sm=$('strictMode');
+  const st=$('strictTopN');
+  if(sm && st){
+    const sync=()=>{st.disabled=!sm.checked; st.parentElement.style.opacity=sm.checked?'1':'0.5';};
+    sm.addEventListener('change', sync);
+    sync();
+  }
+})();
+
+setStep(1);
+</script>
+</body>
+</html>

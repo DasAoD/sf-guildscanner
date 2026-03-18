@@ -1,0 +1,15 @@
+[package]
+name = "sfguild-scanner"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sf-api = "0.3"
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.7", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+log = "0.4"
+env_logger = "0.11"
+chrono = "0.4"
