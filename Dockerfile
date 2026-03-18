@@ -28,6 +28,10 @@ COPY static/ /app/static/
 # Create data directory for persistent scan results
 RUN mkdir -p /app/data
 
+# Version label for Unraid update detection (passed via --build-arg from CI)
+ARG VERSION=dev
+LABEL version="${VERSION}"
+
 EXPOSE 8080
 
 VOLUME ["/app/data"]
