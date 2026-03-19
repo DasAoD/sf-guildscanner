@@ -18,11 +18,28 @@
     background-image: radial-gradient(ellipse at 20% 0%, rgba(212,167,67,0.05) 0%, transparent 50%),
     radial-gradient(ellipse at 80% 100%, rgba(100,60,20,0.06) 0%, transparent 50%); }
 
-  header { text-align:center; padding:1.5rem 1rem 1rem; border-bottom:2px solid var(--border);
-    background: linear-gradient(180deg, rgba(90,74,53,0.12) 0%, transparent 100%); }
-  header h1 { font-family:var(--ff); font-size:2.2rem; color:var(--gold);
+  header {
+    text-align:center; padding:1.2rem 1rem 0.9rem;
+    border-bottom:2px solid var(--border);
+    background: var(--bg);
+    position: sticky; top: 0; z-index: 50;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  }
+  header .header-inner {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  header .header-title h1 { font-family:var(--ff); font-size:2.2rem; color:var(--gold);
     text-shadow:0 2px 8px rgba(212,167,67,0.25); }
-  header p { color:var(--dim); font-size:0.9rem; margin-top:0.2rem; }
+  header .header-title p { color:var(--dim); font-size:0.9rem; margin-top:0.2rem; }
+  header .header-logout {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+  }
 
   .c { max-width:1200px; margin:0 auto; padding:1.2rem; }
   .card { background:var(--bg2); border:1px solid var(--border); border-radius:8px;
@@ -47,11 +64,14 @@
   .btn-s { background:var(--bg); color:var(--txt); border-color:var(--border); }
   .btn-s:hover { border-color:var(--gold-d); }
   .btn-d { background:linear-gradient(180deg,var(--red),#8a2020); border-color:var(--red); color:#fff; }
+  .btn-txt { background:linear-gradient(180deg,#3a6ea8,#2a4e78); border-color:#4a7ab0; color:#fff; }
 
   table { width:100%; border-collapse:collapse; font-size:0.85rem; }
   th { background:rgba(90,74,53,0.2); color:var(--gold-l); font-weight:600; text-align:left;
     padding:0.5rem 0.6rem; border-bottom:2px solid var(--border); cursor:pointer; user-select:none; white-space:nowrap; }
   th:hover { color:var(--bright); }
+  th.no-sort { cursor:default; }
+  th.no-sort:hover { color:var(--gold-l); }
   th .arrow { font-size:0.7rem; opacity:0.5; }
   td { padding:0.45rem 0.6rem; border-bottom:1px solid rgba(90,74,53,0.15); white-space:nowrap; }
   tr:hover td { background:rgba(212,167,67,0.03); }
@@ -89,14 +109,27 @@
 
   .level-bar { display:inline-block; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle; }
 
+  .sel-info { font-size:0.78rem; color:var(--dim); margin-left:0.5rem; }
+
   .hidden { display:none!important; }
-  @media(max-width:600px) { header h1{font-size:1.5rem} .form-row{flex-direction:column} .fg{min-width:100%} }
+  @media(max-width:600px) { header .header-title h1{font-size:1.5rem} .form-row{flex-direction:column} .fg{min-width:100%} header .header-logout{position:static;transform:none;margin-top:0.5rem} header .header-inner{flex-direction:column;gap:0.4rem} }
 </style>
 </head>
 <body>
 <header>
-  <h1>⚔️ SF Gilden-Scanner</h1>
-  <p>Finde angreifbare Gilden – nach Mitgliedern &amp; Level</p>
+  <div class="c" style="padding-top:0;padding-bottom:0">
+    <div class="header-inner">
+      <div class="header-title">
+        <h1>⚔️ SF Gilden-Scanner</h1>
+        <p>Finde angreifbare Gilden – nach Mitgliedern &amp; Level</p>
+      </div>
+      <div class="header-logout">
+        <button id="headerLogoutBtn" class="btn-d hidden" onclick="doLogout()" title="Ausloggen">
+          🚪 Ausloggen
+        </button>
+      </div>
+    </div>
+  </div>
 </header>
 <div class="c">
 
@@ -187,12 +220,21 @@
         <input type="checkbox" id="fStrict" checked><label for="fStrict" style="white-space:nowrap">Nur Strikt OK</label>
       </div>
       <button onclick="applyFilter()">Filtern</button>
-      <button class="btn-s" onclick="location.href='/api/export'" title="Alle Daten als JSON exportieren">📥 Export</button>
+      <button class="btn-s" onclick="location.href='/api/export'" title="Alle Daten als JSON exportieren">📥 JSON Export</button>
+      <button class="btn-txt" onclick="exportTxt()" title="Ausgewählte Gilden als TXT exportieren">📄 TXT Export</button>
+    </div>
+
+    <!-- Selection info bar -->
+    <div id="selBar" style="margin-bottom:0.5rem;font-size:0.82rem;color:var(--dim);display:flex;align-items:center;gap:0.6rem">
+      <span id="selInfo">0 Gilden ausgewählt</span>
+      <button class="btn-s" style="padding:0.15rem 0.5rem;font-size:0.75rem" onclick="selectAllVisible()">Alle auswählen</button>
+      <button class="btn-s" style="padding:0.15rem 0.5rem;font-size:0.75rem" onclick="deselectAll()">Auswahl aufheben</button>
     </div>
 
     <div class="tbl-wrap">
       <table id="rTable">
         <thead><tr>
+          <th class="no-sort" style="width:32px"><input type="checkbox" id="selAll" title="Alle auswählen / abwählen" onchange="toggleAll(this)"></th>
           <th onclick="sortBy('name')">Gilde <span class="arrow" id="sort_name"></span></th>
           <th onclick="sortBy('member_count')">Mitgl. <span class="arrow" id="sort_member_count"></span></th>
           <th onclick="sortBy('max_level')">Max Lvl <span class="arrow" id="sort_max_level"></span></th>
@@ -208,9 +250,6 @@
     </div>
   </div>
 
-  <div class="hidden" id="logoutArea" style="text-align:center;margin-top:0.8rem">
-    <button class="btn-d" onclick="doLogout()">Ausloggen</button>
-  </div>
 </div>
 
 <!-- DETAIL MODAL -->
@@ -277,6 +316,8 @@ async function selectChar(idx){
     const r=await api('select-character',{index:idx});
     if(!r.success){alert(r.error);return;}
     showGuild(r.data); setStep(3);
+    // Show logout button in header
+    $('headerLogoutBtn').classList.remove('hidden');
     // Check for existing scan
     const st=await api('status');
     if(st.data?.has_scan_data){
@@ -293,7 +334,6 @@ function showGuild(g){
   $('charCard').classList.add('hidden');
   $('guildCard').classList.remove('hidden');
   $('scanCard').classList.remove('hidden');
-  $('logoutArea').classList.remove('hidden');
   $('guildName').textContent=g.name;
 
   const ownMax=Math.max(...g.members.map(m=>m.level));
@@ -403,7 +443,6 @@ async function applyFilter(){
     if(!r.success){alert(r.error);return;}
     results=r.data.guilds;
     ownGuild=r.data.own_guild;
-    // computed fields for UI (no backend changes needed)
     results.forEach(g=>{ g.avg_level = (g.member_count>0)?(g.total_level/g.member_count):0; });
     if(ownGuild && Array.isArray(ownGuild.members)){
       const sum=ownGuild.members.reduce((s,m)=>s+m.level,0);
@@ -419,6 +458,10 @@ async function applyFilter(){
 
 function renderTable(){
   const tb=$('rBody'); tb.innerHTML='';
+  // Reset select-all checkbox
+  $('selAll').checked=false;
+  updateSelInfo();
+
   // Update sort arrows
   document.querySelectorAll('th .arrow').forEach(a=>a.textContent='');
   const arrow=$('sort_'+sortKey);
@@ -446,6 +489,7 @@ function renderTable(){
     const strictBadge=g.strict_evaluated?(g.strict_beatable?'<span class="badge b-grn">✔ Strikt</span>':'<span class="badge b-red">✖ Strikt</span>'):'';
 
     tr.innerHTML=`
+      <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" onchange="updateSelInfo()"></td>
       <td><strong>${esc(g.name)}</strong></td>
       <td class="${memberCls}">${g.member_count}</td>
       <td class="${maxCls}">${g.max_level}</td>
@@ -465,13 +509,60 @@ function sortBy(key){
   renderTable();
 }
 
+// ── CHECKBOX SELECTION ─────────────────────────────────────
+function toggleAll(cb){
+  document.querySelectorAll('.gsel').forEach(c=>c.checked=cb.checked);
+  updateSelInfo();
+}
+
+function selectAllVisible(){
+  document.querySelectorAll('.gsel').forEach(c=>c.checked=true);
+  $('selAll').checked=true;
+  updateSelInfo();
+}
+
+function deselectAll(){
+  document.querySelectorAll('.gsel').forEach(c=>c.checked=false);
+  $('selAll').checked=false;
+  updateSelInfo();
+}
+
+function updateSelInfo(){
+  const total=document.querySelectorAll('.gsel').length;
+  const checked=document.querySelectorAll('.gsel:checked').length;
+  $('selInfo').textContent=`${checked} von ${total} Gilden ausgewählt`;
+  // Sync header checkbox state
+  if(total>0){
+    $('selAll').indeterminate = checked>0 && checked<total;
+    if(checked===total) $('selAll').checked=true;
+    if(checked===0) $('selAll').checked=false;
+  }
+}
+
+// ── TXT EXPORT ─────────────────────────────────────────────
+function exportTxt(){
+  const checked=[...document.querySelectorAll('.gsel:checked')].map(c=>c.dataset.name);
+  if(!checked.length){
+    alert('Keine Gilden ausgewählt.\nBitte zuerst die gewünschten Gilden per Checkbox markieren.');
+    return;
+  }
+  const content=checked.join('/');
+  const blob=new Blob([content],{type:'text/plain;charset=utf-8'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='gilden_angriff.txt';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
 // ── DETAIL MODAL ───────────────────────────────────────────
 async function showDetail(name){
   $('mTitle').textContent='Lade...';
   $('mBody').innerHTML='<div style="text-align:center;color:var(--dim)">⏳</div>';
   $('modal').classList.remove('hidden');
 
-  // Find in results first
   const cached=results.find(g=>g.name===name);
   if(cached){renderDetail(cached);return;}
 
@@ -486,7 +577,6 @@ function renderDetail(g){
   $('mTitle').textContent=`🏰 ${g.name}`;
   const maxLvl=g.max_level||Math.max(...g.members.map(m=>m.level));
 
-  // Compare with own guild
   const ownAvg=(ownGuild && typeof ownGuild.avg_level==='number')?ownGuild.avg_level:(ownGuild.member_count>0?ownGuild.members.reduce((s,m)=>s+m.level,0)/ownGuild.member_count:0);
   const ownMax=Math.max(...ownGuild.members.map(m=>m.level));
   const gAvg=(g.member_count>0)?(g.total_level/g.member_count):0;
@@ -503,7 +593,6 @@ function renderDetail(g){
       Max Level: <span class="${maxDiff<=0?'pos':'neg'}">${maxDiff>0?'+':''}${maxDiff}</span>
     </div>`;
   }
-
 
   let strictHtml='';
   if(g.strict_evaluated){
@@ -536,7 +625,11 @@ function renderDetail(g){
 }
 
 // ── LOGOUT ─────────────────────────────────────────────────
-async function doLogout(){await api('logout',{});location.reload();}
+async function doLogout(){
+  await api('logout',{});
+  $('headerLogoutBtn').classList.add('hidden');
+  location.reload();
+}
 
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 
