@@ -143,7 +143,7 @@
     <div class="stats" id="guildStats"></div>
     <details>
       <summary style="cursor:pointer;color:var(--dim);font-size:0.82rem">Mitglieder anzeigen</summary>
-      <div class="tbl-wrap" style="margin-top:0.4rem"><table id="ownMembers"><thead><tr><th>Name</th><th>Level</th></tr></thead><tbody></tbody></table></div>
+      <div class="tbl-wrap" style="margin-top:0.4rem;max-height:220px;overflow-y:auto"><table id="ownMembers"><thead><tr><th>Name</th><th>Level</th></tr></thead><tbody></tbody></table></div>
     </details>
   </div>
 
@@ -197,12 +197,19 @@
         <input type="checkbox" id="fStrict" checked><label for="fStrict" style="white-space:nowrap">Nur Strikt OK</label>
       </div>
       <button onclick="applyFilter()">Filtern</button>
-      <button class="btn-s" onclick="location.href='/api/export'" title="Alle Daten als JSON exportieren">📥 Export</button>
+      <button class="btn-s" onclick="location.href='/api/export'" title="Alle Daten als JSON exportieren">📥 JSON</button>
+      <button class="btn-s" style="background:var(--blue);color:#fff;border-color:var(--blue)" onclick="doTxtExport()" title="Ausgewählte Gilden als TXT exportieren">📄 TXT</button>
+    </div>
+    <div style="font-size:0.8rem;color:var(--dim);margin-bottom:0.5rem">
+      <button class="btn-s" style="padding:0.2rem 0.6rem;font-size:0.75rem" onclick="selectAll()">Alle auswählen</button>
+      <button class="btn-s" style="padding:0.2rem 0.6rem;font-size:0.75rem;margin-left:0.3rem" onclick="selectNone()">Auswahl aufheben</button>
+      <span id="selCount" style="margin-left:0.6rem"></span>
     </div>
 
     <div class="tbl-wrap">
       <table id="rTable">
         <thead><tr>
+          <th style="width:2rem"><input type="checkbox" id="chkAll" onclick="toggleAll(this)" style="accent-color:var(--gold)"></th>
           <th onclick="sortBy('name')">Gilde <span class="arrow" id="sort_name"></span></th>
           <th onclick="sortBy('member_count')">Mitgl. <span class="arrow" id="sort_member_count"></span></th>
           <th onclick="sortBy('max_level')">Max Lvl <span class="arrow" id="sort_max_level"></span></th>
@@ -450,6 +457,7 @@ function renderTable(){
     const strictBadge=g.strict_evaluated?(g.strict_beatable?'<span class="badge b-grn">✔ Strikt</span>':'<span class="badge b-red">✖ Strikt</span>'):'';
 
     tr.innerHTML=`
+      <td><input type="checkbox" class="row-chk" data-name="${esc(g.name)}" style="accent-color:var(--gold)" onchange="updateSelCount()"></td>
       <td><strong>${esc(g.name)}</strong></td>
       <td class="${memberCls}">${g.member_count}</td>
       <td class="${maxCls}">${g.max_level}</td>
@@ -461,6 +469,7 @@ function renderTable(){
       <td><button class="btn-s" style="padding:0.25rem 0.5rem;font-size:0.75rem" data-g="${esc(g.name)}" onclick="showDetail(this.dataset.g)">👁</button></td>`;
     tb.appendChild(tr);
   });
+  updateSelCount();
 }
 
 function sortBy(key){
@@ -533,6 +542,49 @@ function renderDetail(g){
     ${cmp}
     ${strictHtml}
     <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Level</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+// ── CHECKBOX & TXT EXPORT ──────────────────────────────────
+function updateSelCount(){
+  const all=document.querySelectorAll('.row-chk');
+  const checked=document.querySelectorAll('.row-chk:checked');
+  $('selCount').textContent=checked.length>0?`${checked.length} von ${all.length} ausgewählt`:'';
+  const chkAll=$('chkAll');
+  if(chkAll){
+    chkAll.indeterminate=checked.length>0 && checked.length<all.length;
+    chkAll.checked=checked.length===all.length && all.length>0;
+  }
+}
+
+function toggleAll(cb){
+  document.querySelectorAll('.row-chk').forEach(c=>c.checked=cb.checked);
+  updateSelCount();
+}
+
+function selectAll(){
+  document.querySelectorAll('.row-chk').forEach(c=>c.checked=true);
+  const ca=$('chkAll'); if(ca)ca.checked=true;
+  updateSelCount();
+}
+
+function selectNone(){
+  document.querySelectorAll('.row-chk').forEach(c=>c.checked=false);
+  const ca=$('chkAll'); if(ca){ca.checked=false;ca.indeterminate=false;}
+  updateSelCount();
+}
+
+function doTxtExport(){
+  const checked=[...document.querySelectorAll('.row-chk:checked')];
+  if(checked.length===0){alert('Keine Gilden ausgewählt.');return;}
+  const names=checked.map(c=>c.dataset.name);
+  const content=names.join('/');
+  const filename=(ownGuild?.name||'gilden').replace(/[^a-zA-Z0-9_\-äöüÄÖÜß]/g,'_')+'_angriff.txt';
+  const blob=new Blob([content],{type:'text/plain'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 // ── LOGOUT ─────────────────────────────────────────────────
