@@ -96,10 +96,6 @@ struct DetailedGuild {
     #[serde(default)]
     strict_own_active_members: usize,
     #[serde(default)]
-    strict_topn: bool,
-    #[serde(default)]
-    strict_topn_n: usize,
-    #[serde(default)]
     strict_fail_index: Option<usize>,
     #[serde(default)]
     strict_fail_enemy_level: Option<u16>,
@@ -144,8 +140,6 @@ struct ScanSettings {
     max_extra_up_pages: u32,
     /// Strict mode: level-to-level compare using own active members (<24h)
     strict_mode: bool,
-    /// Strict Top-N: compare enemy against our best N active members (N = enemy members)
-    strict_topn: bool,
 }
 
 impl Default for ScanSettings {
@@ -155,7 +149,6 @@ impl Default for ScanSettings {
             honor_up_scan: true,
             max_extra_up_pages: 10,
             strict_mode: true,
-            strict_topn: true,
         }
     }
 }
@@ -193,8 +186,6 @@ struct ScanRequest {
     max_extra_up_pages: Option<u32>,
     #[serde(default)]
     strict_mode: Option<bool>,
-    #[serde(default)]
-    strict_topn: Option<bool>,
 }
 
 
@@ -399,7 +390,6 @@ async fn select_character(
                 app.own_guild = Some(info.clone());
 
                 // Try to load existing scan data
-                // (server url was captured before we mutated app state)
                 let server = server.clone();
                 if let Ok(data) = load_scan_data(&server, &info.name) {
                     log::info!("Loaded existing scan from {}", data.scanned_at);
@@ -440,7 +430,6 @@ async fn start_scan(
         if let Some(v) = req.honor_up_scan { s.honor_up_scan = v; }
         if let Some(v) = req.max_extra_up_pages { s.max_extra_up_pages = v; }
         if let Some(v) = req.strict_mode { s.strict_mode = v; }
-        if let Some(v) = req.strict_topn { s.strict_topn = v; }
         // clamp to sane values
         s.down_limit = s.down_limit.clamp(0, 50_000);
         s.max_extra_up_pages = s.max_extra_up_pages.clamp(0, 50);
@@ -587,9 +576,6 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
                 continue;
             }
 
-            // Keep only what we need:
-            // - below us up to down_limit
-            // - above us up to 20 ranks
             let in_rank_window = (hg.rank >= rank_up_start && hg.rank < own_rank)
                 || (hg.rank > own_rank && hg.rank <= rank_down_end);
 
@@ -613,7 +599,7 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
 
-    // ── 1b) Optional honor-up-scan: scan extra pages ABOVE the 20-rank window until honor-rule yields nothing
+    // ── 1b) Optional honor-up-scan: scan extra pages ABOVE the 20-rank window
     if settings.honor_up_scan && page_low > 0 && !cancelled(&state).await {
         let mut extra_scanned = 0u32;
         let mut page = page_low - 1;
@@ -636,17 +622,17 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
             }
 
             let guilds_on_page = {
-            let mut app = state.lock().await;
-            let idx = app.selected.unwrap();
-            let session = &mut app.sessions[idx];
-            match session.send_command(Command::HallOfFameGroupPage { page }).await {
-                Ok(gs) => gs.hall_of_fames.guilds.clone(),
-                Err(e) => {
-                    log::warn!("HoF page {} error: {:?}", page, e);
-                    Vec::new()
+                let mut app = state.lock().await;
+                let idx = app.selected.unwrap();
+                let session = &mut app.sessions[idx];
+                match session.send_command(Command::HallOfFameGroupPage { page }).await {
+                    Ok(gs) => gs.hall_of_fames.guilds.clone(),
+                    Err(e) => {
+                        log::warn!("HoF page {} error: {:?}", page, e);
+                        Vec::new()
+                    }
                 }
-            }
-        };
+            };
 
             let mut found_any = false;
             for hg in &guilds_on_page {
@@ -654,12 +640,10 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
                     continue;
                 }
 
-                // Only above us
                 if hg.rank >= own_rank {
                     continue;
                 }
 
-                // Honor-rule: guild honor is at most 3000 above ours (or lower)
                 if hg.honor > own_honor.saturating_add(3000) {
                     continue;
                 }
@@ -668,7 +652,6 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
 
                 let attackable = is_attackable(own_rank, own_honor, hg.rank, hg.honor);
 
-                // Avoid duplicates (same guild can appear across pages? usually no, but safe)
                 if all_hof_guilds.iter().any(|g| g.name == hg.name) {
                     continue;
                 }
@@ -686,7 +669,6 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
 
             extra_scanned += 1;
 
-            // Stop as soon as a page yields no honor-rule candidates
             if !found_any {
                 break;
             }
@@ -779,8 +761,6 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
                         let mut strict_evaluated = false;
                         let mut strict_beatable = false;
                         let strict_own_active_members = own_active_levels.len();
-                        let mut strict_topn = false;
-                        let mut strict_topn_n: usize = 0;
                         let mut strict_fail_index: Option<usize> = None;
                         let mut strict_fail_enemy_level: Option<u16> = None;
                         let mut strict_fail_own_level: Option<u16> = None;
@@ -789,12 +769,8 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
                         if settings.strict_mode {
                             strict_evaluated = true;
 
-                            strict_topn = settings.strict_topn;
-
                             let mut enemy_levels: Vec<u16> = members.iter().map(|m| m.level).collect();
                             enemy_levels.sort_unstable();
-
-                            strict_topn_n = enemy_levels.len();
 
                             if enemy_levels.len() > strict_own_active_members {
                                 strict_beatable = false;
@@ -807,45 +783,21 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
                                 strict_beatable = false;
                                 strict_fail_reason = Some("Keine aktiven eigenen Mitglieder (>= 1 Tag offline wird ausgeklammert).".to_string());
                             } else {
-                                if settings.strict_topn {
-                                    // Top-N compare: enemy against our best N active members (N = enemy members)
-                                    let n = enemy_levels.len();
-                                    let start = strict_own_active_members.saturating_sub(n);
-                                    let own_slice: &[u16] = &own_active_levels[start..];
-
-                                    strict_beatable = true;
-                                    for i in 0..n {
-                                        if enemy_levels[i] > own_slice[i] {
-                                            strict_beatable = false;
-                                            strict_fail_index = Some(i);
-                                            strict_fail_enemy_level = Some(enemy_levels[i]);
-                                            strict_fail_own_level = Some(own_slice[i]);
-                                            strict_fail_reason = Some(format!(
-                                                "Slot {}: Gegner {} > eigene {} (Top-N, aufsteigend sortiert)",
-                                                i + 1,
-                                                enemy_levels[i],
-                                                own_slice[i]
-                                            ));
-                                            break;
-                                        }
-                                    }
-                                } else {
-                                    // Full roster compare: enemy against our lowest active members (ascending)
-                                    strict_beatable = true;
-                                    for i in 0..enemy_levels.len() {
-                                        if enemy_levels[i] > own_active_levels[i] {
-                                            strict_beatable = false;
-                                            strict_fail_index = Some(i);
-                                            strict_fail_enemy_level = Some(enemy_levels[i]);
-                                            strict_fail_own_level = Some(own_active_levels[i]);
-                                            strict_fail_reason = Some(format!(
-                                                "Slot {}: Gegner {} > eigene {} (aufsteigend sortiert)",
-                                                i + 1,
-                                                enemy_levels[i],
-                                                own_active_levels[i]
-                                            ));
-                                            break;
-                                        }
+                                // Full roster compare: enemy against our lowest active members (ascending)
+                                strict_beatable = true;
+                                for i in 0..enemy_levels.len() {
+                                    if enemy_levels[i] > own_active_levels[i] {
+                                        strict_beatable = false;
+                                        strict_fail_index = Some(i);
+                                        strict_fail_enemy_level = Some(enemy_levels[i]);
+                                        strict_fail_own_level = Some(own_active_levels[i]);
+                                        strict_fail_reason = Some(format!(
+                                            "Slot {}: Gegner {} > eigene {} (aufsteigend sortiert)",
+                                            i + 1,
+                                            enemy_levels[i],
+                                            own_active_levels[i]
+                                        ));
+                                        break;
                                     }
                                 }
                             }
@@ -865,8 +817,6 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
                             strict_evaluated,
                             strict_beatable,
                             strict_own_active_members,
-                            strict_topn,
-                            strict_topn_n,
                             strict_fail_index,
                             strict_fail_enemy_level,
                             strict_fail_own_level,
@@ -946,30 +896,25 @@ async fn get_results(
 
     let total_attackable = scan.detailed_guilds.len();
     let strict_available = scan.detailed_guilds.iter().any(|g| g.strict_evaluated);
-    // "winnable_only" default: if strict data exists, default to strict-only.
     let strict_only = filter.strict_only.unwrap_or(true);
 
     let filtered: Vec<DetailedGuild> = scan
         .detailed_guilds
         .iter()
         .filter(|g| {
-            // Filter: max members
             if let Some(max_m) = filter.max_members {
                 if g.member_count as u32 > max_m {
                     return false;
                 }
             }
-            // Filter: max level of highest member
             if let Some(max_lvl) = filter.max_highest_level {
                 if g.max_level > max_lvl {
                     return false;
                 }
             }
-            // Filter: hide attacked
             if filter.hide_attacked.unwrap_or(false) && g.is_attacked {
                 return false;
             }
-            // Filter: strict only (default ON if strict data exists)
             if strict_only && strict_available {
                 if !g.strict_evaluated || !g.strict_beatable {
                     return false;
@@ -996,7 +941,6 @@ async fn guild_details(
     State(state): State<SharedState>,
     Json(req): Json<GuildDetailRequest>,
 ) -> impl IntoResponse {
-    // First check if we already have it in scan data
     {
         let app = state.lock().await;
         if let Some(scan) = &app.scan_data {
@@ -1006,7 +950,6 @@ async fn guild_details(
         }
     }
 
-    // Otherwise fetch live
     let mut app = state.lock().await;
     let idx = match app.selected {
         Some(i) => i,
@@ -1043,8 +986,6 @@ async fn guild_details(
                     strict_evaluated: false,
                     strict_beatable: false,
                     strict_own_active_members: 0,
-                    strict_topn: false,
-                    strict_topn_n: 0,
                     strict_fail_index: None,
                     strict_fail_enemy_level: None,
                     strict_fail_own_level: None,
@@ -1151,11 +1092,9 @@ fn save_scan_data(data: &ScanData) -> Result<(), String> {
     let latest_path = scan_file_path(&data.server, &data.own_guild.name);
     let json = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
 
-    // latest (stable filename)
     std::fs::write(&latest_path, &json).map_err(|e| e.to_string())?;
     log::info!("Scan data saved to {}", latest_path);
 
-    // history (timestamped)
     let ts = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
     let hist_path = history_file_path(&data.server, &data.own_guild.name, &ts);
     std::fs::write(&hist_path, &json).map_err(|e| e.to_string())?;
