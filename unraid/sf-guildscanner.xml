@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>sf-guildscanner</Name>
+  <Repository>dasaod/sf-guildscanner:latest</Repository>
+  <Registry>https://hub.docker.com/r/dasaod/sf-guildscanner</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/DasAoD/sf-guildscanner/issues</Support>
+  <Project>https://github.com/DasAoD/sf-guildscanner</Project>
+  <ReadMe>https://github.com/DasAoD/sf-guildscanner#readme</ReadMe>
+  <Overview>SF Gilden-Scanner – Findet angreifbare Gilden in Shakes &amp; Fidget basierend auf Mitgliederanzahl und den einzelnen Leveln der Mitglieder. Vollautomatischer HoF-Scan mit Strikt-Modus-Vergleich und persistenter Datenspeicherung.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8085]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/DasAoD/sf-guildscanner/main/unraid/sf-guildscanner.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/DasAoD/sf-guildscanner/main/unraid/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Description>SF Gilden-Scanner – Findet angreifbare Gilden in Shakes &amp; Fidget basierend auf Mitgliederanzahl und den einzelnen Leveln der Mitglieder. Vollautomatischer HoF-Scan mit Strikt-Modus-Vergleich und persistenter Datenspeicherung.</Description>
+  <Networking>
+    <Mode>bridge</Mode>
+    <Publish>
+      <Port>
+        <HostPort>8085</HostPort>
+        <ContainerPort>8080</ContainerPort>
+        <Protocol>tcp</Protocol>
+      </Port>
+    </Publish>
+  </Networking>
+  <Data>
+    <Volume>
+      <HostDir>/mnt/user/appdata/sf-guildscanner/data</HostDir>
+      <ContainerDir>/app/data</ContainerDir>
+      <Mode>rw</Mode>
+    </Volume>
+  </Data>
+  <Environment>
+    <Variable>
+      <Value>info</Value>
+      <Name>RUST_LOG</Name>
+    </Variable>
+  </Environment>
+  <Config Name="Web-Interface Port" Target="8080" Default="8085" Mode="tcp"
+    Description="Port für das Web-Interface des SF Gilden-Scanners."
+    Type="Port" Display="always" Required="true" Mask="false">8085</Config>
+  <Config Name="Scan-Daten (Pfad)" Target="/app/data" Default="/mnt/user/appdata/sf-guildscanner/data" Mode="rw"
+    Description="Persistenter Speicherort für Scan-Ergebnisse (JSON-Dateien). Wird beim Container-Neustart automatisch wiederhergestellt."
+    Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/sf-guildscanner/data</Config>
+  <Config Name="RUST_LOG" Target="RUST_LOG" Default="info" Mode=""
+    Description="Log-Level des Backends. Mögliche Werte: error, warn, info, debug, trace."
+    Type="Variable" Display="advanced" Required="false" Mask="false">info</Config>
+</Container>
