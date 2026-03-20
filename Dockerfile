@@ -30,7 +30,16 @@ RUN mkdir -p /app/data
 
 # Version label for Unraid update detection (passed via --build-arg from CI)
 ARG VERSION=dev
-LABEL version="${VERSION}"
+LABEL version="${VERSION}" \
+      net.unraid.docker.webui="http://[IP]:[PORT:8085]/" \
+      net.unraid.docker.icon="https://raw.githubusercontent.com/DasAoD/sf-guildscanner/main/unraid/icon.jpg" \
+      net.unraid.docker.project="https://github.com/DasAoD/sf-guildscanner" \
+      net.unraid.docker.support="https://github.com/DasAoD/sf-guildscanner/issues" \
+      net.unraid.docker.readme="https://github.com/DasAoD/sf-guildscanner#readme" \
+      org.opencontainers.image.url="https://github.com/DasAoD/sf-guildscanner" \
+      org.opencontainers.image.documentation="https://github.com/DasAoD/sf-guildscanner#readme" \
+      org.opencontainers.image.source="https://github.com/DasAoD/sf-guildscanner" \
+      org.opencontainers.image.description="SF Gilden-Scanner – findet angreifbare Gilden in Shakes & Fidget. Rust + Axum, Web UI, Docker."
 
 EXPOSE 8080
 
