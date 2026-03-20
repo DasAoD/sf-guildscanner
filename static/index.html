@@ -18,11 +18,17 @@
     background-image: radial-gradient(ellipse at 20% 0%, rgba(212,167,67,0.05) 0%, transparent 50%),
     radial-gradient(ellipse at 80% 100%, rgba(100,60,20,0.06) 0%, transparent 50%); }
 
-  header { text-align:center; padding:1.5rem 1rem 1rem; border-bottom:2px solid var(--border);
-    background: linear-gradient(180deg, rgba(90,74,53,0.12) 0%, transparent 100%); }
-  header h1 { font-family:var(--ff); font-size:2.2rem; color:var(--gold);
+  header { text-align:center; padding:1rem 1rem 0.8rem; border-bottom:2px solid var(--border);
+    background: var(--bg); position:sticky; top:0; z-index:50;
+    box-shadow:0 2px 12px rgba(0,0,0,0.5); }
+  header .header-inner { position:relative; display:flex; align-items:center; justify-content:center; }
+  header .header-title h1 { font-family:var(--ff); font-size:2.2rem; color:var(--gold);
     text-shadow:0 2px 8px rgba(212,167,67,0.25); }
-  header p { color:var(--dim); font-size:0.9rem; margin-top:0.2rem; }
+  header .header-title p { color:var(--dim); font-size:0.9rem; margin-top:0.2rem; }
+  header .header-logout { position:absolute; right:0; top:50%; transform:translateY(-50%); }
+  .guild-sticky { position:sticky; top:74px; z-index:40; background:var(--bg2);
+    border:1px solid var(--border); border-radius:8px; margin-bottom:1.1rem;
+    box-shadow:0 4px 12px rgba(0,0,0,0.5); }
 
   .c { max-width:1200px; margin:0 auto; padding:1.2rem; }
   .card { background:var(--bg2); border:1px solid var(--border); border-radius:8px;
@@ -95,8 +101,15 @@
 </head>
 <body>
 <header>
-  <h1>⚔️ SF Gilden-Scanner</h1>
-  <p>Finde angreifbare Gilden – nach Mitgliedern &amp; Level</p>
+  <div class="header-inner">
+    <div class="header-title">
+      <h1>⚔️ SF Gilden-Scanner</h1>
+      <p>Finde angreifbare Gilden – nach Mitgliedern &amp; Level</p>
+    </div>
+    <div class="header-logout hidden" id="logoutArea">
+      <button class="btn-d" onclick="doLogout()">🚪 Ausloggen</button>
+    </div>
+  </div>
 </header>
 <div class="c">
 
@@ -125,7 +138,7 @@
   </div>
 
   <!-- OWN GUILD -->
-  <div class="card hidden" id="guildCard">
+  <div class="card guild-sticky hidden" id="guildCard">
     <h2>🏰 <span id="guildName"></span></h2>
     <div class="stats" id="guildStats"></div>
     <details>
@@ -205,9 +218,7 @@
     </div>
   </div>
 
-  <div class="hidden" id="logoutArea" style="text-align:center;margin-top:0.8rem">
-    <button class="btn-d" onclick="doLogout()">Ausloggen</button>
-  </div>
+
 </div>
 
 <!-- DETAIL MODAL -->
