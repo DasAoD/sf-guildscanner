@@ -36,6 +36,17 @@ Der komplette Scan lässt sich als JSON exportieren (Button "📥 Export"), inkl
 
 ## Deployment
 
+### Unraid (über Community Applications)
+
+Da der Container nicht im CA-Store gelistet ist, muss das Template einmalig manuell heruntergeladen werden. Danach wird es automatisch von CA verwaltet und aktualisiert.
+
+```bash
+wget -O /boot/config/plugins/dockerMan/templates-user/sf-guildscanner.xml \
+  https://raw.githubusercontent.com/DasAoD/sf-guildscanner/main/unraid/sf-guildscanner.xml
+```
+
+Danach in Unraid unter **Docker → Add Container** das Template `sf-guildscanner` auswählen. Den Datenpfad für `/app/data` nach Bedarf anpassen und auf **Apply** klicken.
+
 ### Docker Hub (empfohlen – kein Bauen nötig)
 
 ```bash
@@ -92,6 +103,9 @@ sfguild-scanner/
 │   └── main.rs             # Rust Backend (Axum + sf-api)
 ├── static/
 │   └── index.html          # Web-Frontend
+├── unraid/
+│   ├── sf-guildscanner.xml # Unraid CA Template
+│   └── icon.jpg            # Container-Icon
 └── data/                   # Persistente Scan-Daten (Volume)
     └── scan_*.json
 ```
