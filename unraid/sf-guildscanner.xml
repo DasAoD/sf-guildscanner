@@ -13,7 +13,7 @@
   <Category>Tools:</Category>
   <WebUI>http://[IP]:[PORT:8085]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/DasAoD/sf-guildscanner/main/unraid/sf-guildscanner.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/DasAoD/sf-guildscanner/main/unraid/icon.png</Icon>
+  <Icon>https://raw.githubusercontent.com/DasAoD/sf-guildscanner/main/unraid/icon.jpg</Icon>
   <ExtraParams/>
   <PostArgs/>
   <CPUset/>
