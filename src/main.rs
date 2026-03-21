@@ -757,7 +757,7 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
                         let min_level = members.iter().map(|m| m.level).min().unwrap_or(0);
                         let total_level: u32 = members.iter().map(|m| m.level as u32).sum();
 
-                        // ── Strict mode evaluation: level-to-level compare (ascending) ──
+                        // ── Last-Man-Standing Simulation (level-based) ──
                         let mut strict_evaluated = false;
                         let mut strict_beatable = false;
                         let strict_own_active_members = own_active_levels.len();
@@ -769,36 +769,61 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
                         if settings.strict_mode {
                             strict_evaluated = true;
 
-                            let mut enemy_levels: Vec<u16> = members.iter().map(|m| m.level).collect();
+                            let mut enemy_levels: Vec<i32> = members.iter().map(|m| m.level as i32).collect();
                             enemy_levels.sort_unstable();
+                            let mut own_levels: Vec<i32> = own_active_levels.iter().map(|&l| l as i32).collect();
+                            // own_active_levels is already sorted ascending
 
-                            if enemy_levels.len() > strict_own_active_members {
-                                strict_beatable = false;
-                                strict_fail_reason = Some(format!(
-                                    "Zu viele Mitglieder: Gegner {} > eigene aktiv {}",
-                                    enemy_levels.len(),
-                                    strict_own_active_members
-                                ));
-                            } else if strict_own_active_members == 0 {
-                                strict_beatable = false;
+                            if strict_own_active_members == 0 {
                                 strict_fail_reason = Some("Keine aktiven eigenen Mitglieder (>= 1 Tag offline wird ausgeklammert).".to_string());
                             } else {
-                                // Full roster compare: enemy against our lowest active members (ascending)
-                                strict_beatable = true;
-                                for i in 0..enemy_levels.len() {
-                                    if enemy_levels[i] > own_active_levels[i] {
-                                        strict_beatable = false;
-                                        strict_fail_index = Some(i);
-                                        strict_fail_enemy_level = Some(enemy_levels[i]);
-                                        strict_fail_own_level = Some(own_active_levels[i]);
-                                        strict_fail_reason = Some(format!(
-                                            "Slot {}: Gegner {} > eigene {} (aufsteigend sortiert)",
-                                            i + 1,
-                                            enemy_levels[i],
-                                            own_active_levels[i]
-                                        ));
-                                        break;
+                                // Last-Man-Standing: both sides fight ascending
+                                // Winner continues with remaining HP = level difference
+                                let mut own_idx: usize = 0;
+                                let mut enemy_idx: usize = 0;
+                                let mut own_hp: i32 = own_levels[0];
+                                let mut enemy_hp: i32 = enemy_levels[0];
+
+                                while own_idx < own_levels.len() && enemy_idx < enemy_levels.len() {
+                                    if own_hp > enemy_hp {
+                                        own_hp -= enemy_hp;
+                                        enemy_idx += 1;
+                                        if enemy_idx < enemy_levels.len() {
+                                            enemy_hp = enemy_levels[enemy_idx];
+                                        }
+                                    } else if enemy_hp > own_hp {
+                                        enemy_hp -= own_hp;
+                                        own_idx += 1;
+                                        if own_idx < own_levels.len() {
+                                            own_hp = own_levels[own_idx];
+                                        }
+                                        strict_fail_index = Some(own_idx);
+                                        strict_fail_own_level = Some(own_levels[own_idx.min(own_levels.len()-1)] as u16);
+                                        strict_fail_enemy_level = Some(enemy_levels[enemy_idx] as u16);
+                                    } else {
+                                        // Draw: both eliminated
+                                        own_idx += 1;
+                                        enemy_idx += 1;
+                                        if own_idx < own_levels.len() { own_hp = own_levels[own_idx]; }
+                                        if enemy_idx < enemy_levels.len() { enemy_hp = enemy_levels[enemy_idx]; }
                                     }
+                                }
+
+                                strict_beatable = own_idx < own_levels.len();
+
+                                if strict_beatable {
+                                    strict_fail_index = None;
+                                    strict_fail_own_level = None;
+                                    strict_fail_enemy_level = None;
+                                    strict_fail_reason = Some(format!(
+                                        "Simulation: Sieg – noch {} aktive(s) eigene(s) Mitglied(er) übrig",
+                                        own_levels.len() - own_idx
+                                    ));
+                                } else {
+                                    strict_fail_reason = Some(format!(
+                                        "Simulation: Niederlage – alle {} aktiven Mitglieder besiegt",
+                                        strict_own_active_members
+                                    ));
                                 }
                             }
                         }
