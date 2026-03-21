@@ -454,7 +454,7 @@ function renderTable(){
     const memberCls=memberDiff<0?'pos':memberDiff>0?'neg':'neu';
     const maxCls=g.max_level<ownMax?'pos':g.max_level>ownMax?'neg':'neu';
     const atk=g.is_attacked?'<span class="badge b-red">⚔ Angegriffen</span>':'<span class="badge b-grn">Frei</span>';
-    const strictBadge=g.strict_evaluated?(g.strict_beatable?'<span class="badge b-grn">✔ Sieg</span>':'<span class="badge b-red">✖ Niederlage</span>'):'';
+    const strictBadge=g.strict_evaluated?(g.strict_beatable?'<span class="badge b-grn">✔ Strikt</span>':'<span class="badge b-red">✖ Strikt</span>'):'';
 
     tr.innerHTML=`
       <td><input type="checkbox" class="row-chk" data-name="${esc(g.name)}" style="accent-color:var(--gold)" onchange="updateSelCount()"></td>
@@ -517,10 +517,10 @@ function renderDetail(g){
 
   let strictHtml='';
   if(g.strict_evaluated){
-    const badge=g.strict_beatable?'<span class="badge b-grn">✔ Simulation: Sieg</span>':'<span class="badge b-red">✖ Simulation: Niederlage</span>';
+    const badge=g.strict_beatable?'<span class="badge b-grn">✔ Strikt besiegbar</span>':'<span class="badge b-red">✖ Strikt NICHT</span>';
     const reason=g.strict_fail_reason?`<div style="margin-top:0.35rem;color:var(--dim)">${esc(g.strict_fail_reason)}</div>`:'';
     strictHtml=`<div style="margin-bottom:0.8rem;padding:0.5rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.82rem">
-      <strong style="color:var(--gold)">Level-Simulation (Last Man Standing):</strong> ${badge}<br>
+      <strong style="color:var(--gold)">Strikt-Modus (schwächste N):</strong> ${badge}<br>
       Eigene aktiv (24h): <span class="b-gld badge">${g.strict_own_active_members}</span> | Gegner: <span class="b-gld badge">${g.member_count}</span>
       ${reason}
     </div>`;
