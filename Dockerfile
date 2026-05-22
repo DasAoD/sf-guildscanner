@@ -1,26 +1,27 @@
 # ── Build Stage ───────────────────────────────────────────────────────────────
-# sf-api 0.3 needs Rust >= 1.85 (edition 2024)
 FROM rust:latest AS builder
 
 WORKDIR /build
 COPY Cargo.toml Cargo.toml
 COPY src/ src/
 
-# Build release binary
-RUN cargo build --release 2>&1
+RUN rustup target add x86_64-unknown-linux-musl
+RUN apt-get update && apt-get install -y musl-tools && rm -rf /var/lib/apt/lists/*
+
+# Build static binary (no GLIBC dependency)
+RUN cargo build --release --target x86_64-unknown-linux-musl 2>&1
 
 # ── Runtime Stage ─────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
-    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy binary from builder
-COPY --from=builder /build/target/release/sfguild-scanner /app/sfguild-scanner
+# Copy static binary from builder
+COPY --from=builder /build/target/x86_64-unknown-linux-musl/release/sfguild-scanner /app/sfguild-scanner
 
 # Copy static web files
 COPY static/ /app/static/
