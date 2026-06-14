@@ -58,9 +58,14 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Update Docker Hub README
-        uses: peter-evans/dockerhub-description@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: dasaod/sf-guildscanner
-          readme-filepath: ./README.md
+        run: |
+          TOKEN=$(curl -s -X POST \
+            "https://hub.docker.com/v2/users/login/" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\": \"${{ secrets.DOCKERHUB_USERNAME }}\", \"password\": \"${{ secrets.DOCKERHUB_TOKEN }}\"}" \
+            | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+          curl -s -X PATCH \
+            "https://hub.docker.com/v2/repositories/dasaod/sf-guildscanner/" \
+            -H "Authorization: JWT $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"full_description\": \"$(cat README.md | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')\"}"
