@@ -29,14 +29,15 @@
 //!                    (optional, default 90)
 //!   MUSHROOMS      — Anzahl geladener Riesenpilze im Pilzkatapult, 0-3
 //!                    (optional, default 0). Jeder Pilz trifft VOR
-//!                    Kampfbeginn ein zufällig gewähltes Gegner-Mitglied
-//!                    und halbiert dessen max_health. Modelliert als
-//!                    unabhängige Ziehungen mit Zurücklegen (derselbe
-//!                    Gegner kann theoretisch mehrfach getroffen werden) —
-//!                    Annahme, noch nicht gegen echte Kämpfe verifiziert.
-//!                    Die Ziele werden PRO simuliertem Einzelkampf neu
-//!                    gewürfelt, nicht einmal für alle Iterationen, damit
-//!                    die Streuung realistisch bleibt.
+//!                    Kampfbeginn ein zufällig gewähltes Gegner-Mitglied und
+//!                    zieht ihm 50 Prozentpunkte seines ursprünglichen
+//!                    max_health ab (additiv, nicht multiplikativ — 2
+//!                    Treffer auf dasselbe Ziel = 0% Leben übrig, nicht
+//!                    25%). Modelliert als unabhängige Ziehungen mit
+//!                    Zurücklegen (derselbe Gegner kann mehrfach getroffen
+//!                    werden). Die Ziele werden PRO simuliertem Einzelkampf
+//!                    neu gewürfelt, nicht einmal für alle Iterationen,
+//!                    damit die Streuung realistisch bleibt.
 
 use std::{env, time::{Duration, Instant}};
 
@@ -226,7 +227,8 @@ async fn main() {
     if mushrooms > 0 {
         println!(
             "Pilzkatapult: {mushrooms} Riesenpilz(e) geladen — Ziele werden pro \
-             Einzelkampf neu zufällig gewürfelt (je 50% max_health-Abzug)."
+             Einzelkampf neu zufällig gewürfelt (additiv: 2 Treffer auf dasselbe \
+             Ziel = 0% Leben übrig)."
         );
     }
 
@@ -242,12 +244,26 @@ async fn main() {
     // verfälschen. Deshalb hier ein manueller Loop mit iterations=1 pro
     // Durchlauf statt einem einzelnen simulate_battle(..., iterations, ...)
     // -Aufruf.
+    //
+    // Stacking additiv, nicht multiplikativ: "zieht 50% der Lebensenergie
+    // ab" liest sich als 50 Prozentpunkte vom ursprünglichen Leben, nicht
+    // 50% vom jeweiligen Rest. D.h. 2 Treffer auf dasselbe Ziel = 0% übrig
+    // (praktisch tot vor Kampfbeginn), nicht 25% wie bei multiplikativem
+    // Stacking. Bei einem einzigen Gegner-Mitglied treffen sich zwangsläufig
+    // alle geladenen Pilze gegenseitig auf dasselbe Ziel.
     let mut won_fights = 0u32;
     for _ in 0..iterations {
         let mut right = right_base.clone();
+        let mut hits = vec![0u32; right.len()];
         for _ in 0..mushrooms {
             let target = fastrand::usize(0..right.len());
-            right[target].max_health *= 0.5;
+            hits[target] += 1;
+        }
+        for (fighter, hit_count) in right.iter_mut().zip(hits.iter()) {
+            if *hit_count > 0 {
+                let remaining = (1.0 - 0.5 * f64::from(*hit_count)).max(0.0);
+                fighter.max_health *= remaining;
+            }
         }
         let result = simulate_battle(&left, &right, 1, false);
         won_fights += result.won_fights;
