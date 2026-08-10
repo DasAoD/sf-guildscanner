@@ -15,6 +15,7 @@ use tower_http::services::ServeDir;
 use sf_api::{
     command::Command,
     session::SimpleSession,
+    simulate::{Fighter, PlayerFighterSquad, UpgradeableFighter, simulate_battle},
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -107,32 +108,88 @@ struct DetailedGuild {
     strict_fail_own_level: Option<u16>,
     #[serde(default)]
     strict_fail_reason: Option<String>,
+
+    // ── Kampf-Simulation (sf_api::simulate, on-demand via /api/simulate) ───
+    #[serde(default)]
+    sim_win_ratio: Option<f64>,
+    #[serde(default)]
+    sim_mushrooms: Option<u8>,
+    #[serde(default)]
+    sim_iterations: Option<u32>,
+    #[serde(default)]
+    sim_evaluated_at: Option<String>,
 }
 
 // ── App State ────────────────────────────────────────────────────────────────
 
+/// Alles, was den Login-/Scan-/Simulations-Datenstand betrifft. Wird beim
+/// Absetzen jedes Spielserver-Requests (send_command) für dessen gesamte
+/// Laufzeit gesperrt, da die dafür benötigte SimpleSession Teil davon ist.
 struct AppState {
     sessions: Vec<SimpleSession>,
     selected: Option<usize>,
     own_guild: Option<OwnGuild>,
     scan_data: Option<ScanData>,
-    /// Progress tracking for long-running scans
-    scan_progress: ScanProgress,
     /// Scan settings for the next run
     scan_settings: ScanSettings,
+    /// Gecachte Kampfwerte (via ViewPlayer) der eigenen aktiven Mitglieder,
+    /// um sie nicht vor jeder Simulation neu holen zu müssen. Wird
+    /// verworfen, wenn sich das Aktiv-Roster ändert, der Cache zu alt ist,
+    /// oder der Charakter gewechselt wird.
+    own_fighters_cache: Option<OwnFightersCache>,
+}
+
+/// Fortschritts-/Abbruch-Zustand für Scan und Simulation, bewusst in einem
+/// EIGENEN Lock getrennt von `AppState`. Grund: `AppState` wird für die
+/// gesamte Dauer jedes einzelnen Spielserver-Requests gesperrt (die
+/// SimpleSession lebt dort) — läge der Fortschritt im selben Lock, würden
+/// `/api/progress`, `/api/scan/abort` etc. so lange blockieren, wie der
+/// gerade laufende Request zum Spielserver braucht.
+#[derive(Default)]
+struct ProgressState {
+    scan: ScanProgress,
+    sim: SimProgress,
     /// Cancellation flag (set via /api/scan/abort)
-    cancel_requested: bool,
+    cancel_scan: bool,
+    /// Cancellation flag (set via /api/simulate/abort)
+    cancel_sim: bool,
 }
 
 #[derive(Serialize, Clone, Default)]
 struct ScanProgress {
     running: bool,
-    phase: String,        // "idle", "hof", "details", "done", "error"
+    phase: String,        // "idle", "hof", "details", "done", "error", "aborted"
     current: u32,
     total: u32,
     message: String,
 }
 
+#[derive(Serialize, Clone, Default)]
+struct SimProgress {
+    running: bool,
+    phase: String,        // "idle", "own-roster", "guilds", "done", "error", "aborted"
+    current: u32,
+    total: u32,
+    message: String,
+}
+
+/// Gecachte, per ViewPlayer geholte Kampfwerte der eigenen aktiven
+/// Mitglieder (inkl. wir selbst, kostenlos aus dem GameState).
+struct OwnFightersCache {
+    fetched_at: chrono::DateTime<chrono::Local>,
+    /// Gildenname, für den dieser Cache gilt (Charakterwechsel invalidiert)
+    guild_name: String,
+    /// Sortierte Namen der aktiven Mitglieder, die in `fighters` stecken —
+    /// Vergleichsbasis, um Roster-Änderungen (Zu-/Abgänge, Aktiv-Wechsel)
+    /// sofort zu erkennen, unabhängig vom Zeitfenster.
+    active_names: Vec<String>,
+    fighters: Vec<Fighter>,
+}
+
+/// Wie lange ein Cache der eigenen Kampfwerte ohne Roster-Änderung gültig
+/// bleibt, bevor er trotzdem aufgefrischt wird (z.B. weil sich jemand neu
+/// ausgerüstet/gelevelt hat, ohne dass sich die Aktiv-Liste ändert).
+const OWN_FIGHTERS_TTL_HOURS: i64 = 6;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct ScanSettings {
@@ -161,6 +218,16 @@ impl Default for ScanSettings {
 }
 
 type SharedState = Arc<Mutex<AppState>>;
+type SharedProgress = Arc<Mutex<ProgressState>>;
+
+/// Als Axum-State übergebenes Bündel beider Locks. Handler nehmen sich per
+/// `handles.state`/`handles.progress` gezielt nur den Lock, den sie gerade
+/// brauchen.
+#[derive(Clone)]
+struct AppHandles {
+    state: SharedState,
+    progress: SharedProgress,
+}
 
 // ── API Request/Response Types ───────────────────────────────────────────────
 
@@ -201,6 +268,20 @@ struct ScanRequest {
 #[derive(Deserialize)]
 struct GuildDetailRequest {
     name: String,
+}
+
+#[derive(Deserialize)]
+struct SimulateRequest {
+    /// Namen der zu simulierenden Gilden (müssen im aktuellen scan_data
+    /// vorkommen)
+    guild_names: Vec<String>,
+    /// Anzahl geladener Riesenpilze im Pilzkatapult, 0-3 (wird geclampt)
+    #[serde(default)]
+    mushrooms: u8,
+    /// Anzahl simulierter Kämpfe pro Gilde (optional, default 2500, wird
+    /// geclampt)
+    #[serde(default)]
+    iterations: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -287,7 +368,7 @@ fn is_attackable(own_rank: u32, own_honor: u32, guild_rank: u32, guild_honor: u3
 
 /// POST /api/login
 async fn login(
-    State(state): State<SharedState>,
+    State(handles): State<AppHandles>,
     Json(req): Json<LoginRequest>,
 ) -> impl IntoResponse {
     log::info!("SSO login for: {}", req.username);
@@ -305,12 +386,19 @@ async fn login(
                 .collect();
 
             let count = chars.len();
-            let mut app = state.lock().await;
-            app.sessions = sessions;
-            app.selected = None;
-            app.own_guild = None;
-            app.scan_data = None;
-            app.scan_progress = ScanProgress::default();
+            {
+                let mut app = handles.state.lock().await;
+                app.sessions = sessions;
+                app.selected = None;
+                app.own_guild = None;
+                app.scan_data = None;
+                app.own_fighters_cache = None;
+            }
+            {
+                let mut p = handles.progress.lock().await;
+                p.scan = ScanProgress::default();
+                p.sim = SimProgress::default();
+            }
 
             log::info!("Login OK – {} character(s)", count);
             Ok(ok_response(chars))
@@ -327,8 +415,8 @@ async fn login(
 /// GET /api/characters – Liste der bereits per SSO geladenen Charaktere,
 /// ohne erneuten Login. Ermöglicht den Wechsel zu einem anderen Charakter
 /// auf demselben Account, ohne sich neu einzuloggen.
-async fn list_characters(State(state): State<SharedState>) -> impl IntoResponse {
-    let app = state.lock().await;
+async fn list_characters(State(handles): State<AppHandles>) -> impl IntoResponse {
+    let app = handles.state.lock().await;
 
     if app.sessions.is_empty() {
         return Err(err_response::<Vec<CharacterInfo>>("Nicht eingeloggt"));
@@ -350,10 +438,10 @@ async fn list_characters(State(state): State<SharedState>) -> impl IntoResponse 
 
 /// POST /api/select-character
 async fn select_character(
-    State(state): State<SharedState>,
+    State(handles): State<AppHandles>,
     Json(req): Json<SelectCharRequest>,
 ) -> impl IntoResponse {
-    let mut app = state.lock().await;
+    let mut app = handles.state.lock().await;
 
     if req.index >= app.sessions.len() {
         return Err(err_response::<OwnGuild>("Ungültiger Charakter-Index"));
@@ -362,12 +450,19 @@ async fn select_character(
     // Beim (Wieder-)Auswählen eines Charakters gehört der Stand des vorher
     // ausgewählten Charakters nicht mehr zu diesem Kontext — sonst würden
     // z.B. alte Scan-Daten fälschlich für die neue Gilde angezeigt, falls
-    // für die neue Gilde noch kein eigener Scan gespeichert ist.
+    // für die neue Gilde noch kein eigener Scan gespeichert ist. Der
+    // Kampfwerte-Cache ist ebenfalls charakterspezifisch.
     app.selected = Some(req.index);
     app.own_guild = None;
     app.scan_data = None;
-    app.scan_progress = ScanProgress::default();
-    app.cancel_requested = false;
+    app.own_fighters_cache = None;
+    {
+        let mut p = handles.progress.lock().await;
+        p.scan = ScanProgress::default();
+        p.sim = SimProgress::default();
+        p.cancel_scan = false;
+        p.cancel_sim = false;
+    }
 
     // Borrow session only as long as needed, then release it before touching other app fields.
     let server = app.sessions[req.index].server_url().to_string();
@@ -451,21 +546,26 @@ async fn select_character(
 
 /// POST /api/scan – Start scan around our rank (runs in background)
 async fn start_scan(
-    State(state): State<SharedState>,
+    State(handles): State<AppHandles>,
     Json(req): Json<ScanRequest>,
 ) -> impl IntoResponse {
     {
-        let app = state.lock().await;
+        let app = handles.state.lock().await;
         if app.selected.is_none() || app.own_guild.is_none() {
             return Err(err_response::<String>("Kein Charakter/Gilde geladen"));
         }
-        if app.scan_progress.running {
+    }
+    {
+        let p = handles.progress.lock().await;
+        if p.scan.running {
             return Err(err_response::<String>("Scan läuft bereits"));
+        }
+        if p.sim.running {
+            return Err(err_response::<String>("Bitte warten, bis die laufende Simulation fertig ist"));
         }
     }
     {
-        let mut app = state.lock().await;
-        app.cancel_requested = false;
+        let mut app = handles.state.lock().await;
         // Apply scan settings (with defaults)
         let mut s = app.scan_settings.clone();
         if let Some(v) = req.down_limit { s.down_limit = v; }
@@ -478,14 +578,18 @@ async fn start_scan(
         s.max_extra_up_pages = s.max_extra_up_pages.clamp(0, 50);
         app.scan_settings = s;
     }
+    {
+        let mut p = handles.progress.lock().await;
+        p.cancel_scan = false;
+    }
 
     // Start scan in background task
-    let state_clone = state.clone();
+    let handles_clone = handles.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_scan(state_clone.clone()).await {
+        if let Err(e) = run_scan(handles_clone.clone()).await {
             log::error!("Scan error: {}", e);
-            let mut app = state_clone.lock().await;
-            app.scan_progress = ScanProgress {
+            let mut p = handles_clone.progress.lock().await;
+            p.scan = ScanProgress {
                 running: false,
                 phase: "error".into(),
                 current: 0,
@@ -499,38 +603,41 @@ async fn start_scan(
 }
 
 /// POST /api/scan/abort – Request cancellation of a running scan
-async fn abort_scan(State(state): State<SharedState>) -> impl IntoResponse {
-    let mut app = state.lock().await;
+async fn abort_scan(State(handles): State<AppHandles>) -> impl IntoResponse {
+    let mut p = handles.progress.lock().await;
 
-    if !app.scan_progress.running {
+    if !p.scan.running {
         return ok_response("Kein laufender Scan".to_string());
     }
 
-    app.cancel_requested = true;
+    p.cancel_scan = true;
     ok_response("Abbruch angefordert".to_string())
 }
 
 /// The actual scan logic, running as a background task
-async fn run_scan(state: SharedState) -> Result<(), String> {
+async fn run_scan(handles: AppHandles) -> Result<(), String> {
     const PAGE_SIZE: u32 = 51;
 
     // Snapshot required state + reset cancel flag
     let (own_guild, server, settings) = {
-        let mut app = state.lock().await;
-        app.cancel_requested = false;
-        app.scan_progress = ScanProgress {
-            running: true,
-            phase: "hof".into(),
-            current: 0,
-            total: 0,
-            message: "Starte HoF-Scan...".into(),
-        };
+        let app = handles.state.lock().await;
         let og = app.own_guild.clone().unwrap();
         let idx = app.selected.unwrap();
         let server = app.sessions[idx].server_url().to_string();
         let settings = app.scan_settings.clone();
         (og, server, settings)
     };
+    {
+        let mut p = handles.progress.lock().await;
+        p.cancel_scan = false;
+        p.scan = ScanProgress {
+            running: true,
+            phase: "hof".into(),
+            current: 0,
+            total: 0,
+            message: "Starte HoF-Scan...".into(),
+        };
+    }
 
     let own_rank = own_guild.rank;
     let own_honor = own_guild.honor;
@@ -566,8 +673,8 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
     );
 
     // Helper: check cancellation quickly
-    async fn cancelled(state: &SharedState) -> bool {
-        state.lock().await.cancel_requested
+    async fn cancelled(progress: &SharedProgress) -> bool {
+        progress.lock().await.cancel_scan
     }
 
     let mut all_hof_guilds: Vec<HofGuild> = Vec::new();
@@ -575,9 +682,9 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
     // ── 1a) Scan mandatory rank-window pages (includes up to 20 above + down_limit below)
     let total_pages = page_high.saturating_sub(page_low) + 1;
     {
-        let mut app = state.lock().await;
-        app.scan_progress.total = total_pages;
-        app.scan_progress.message = format!(
+        let mut p = handles.progress.lock().await;
+        p.scan.total = total_pages;
+        p.scan.message = format!(
             "Scanne Rangbereich #{}..#{} ({} Seiten)...",
             rank_up_start,
             rank_down_end,
@@ -586,15 +693,15 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
     }
 
     for (i, page) in (page_low..=page_high).enumerate() {
-        if cancelled(&state).await {
+        if cancelled(&handles.progress).await {
             log::info!("HoF scan cancelled during window pages");
             break;
         }
 
         {
-            let mut app = state.lock().await;
-            app.scan_progress.current = (i as u32) + 1;
-            app.scan_progress.message = format!(
+            let mut p = handles.progress.lock().await;
+            p.scan.current = (i as u32) + 1;
+            p.scan.message = format!(
                 "HoF Seite {} wird gescannt... ({} Gilden gesammelt)",
                 page + 1,
                 all_hof_guilds.len()
@@ -602,7 +709,7 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
         }
 
         let guilds_on_page = {
-            let mut app = state.lock().await;
+            let mut app = handles.state.lock().await;
             let idx = app.selected.unwrap();
             let session = &mut app.sessions[idx];
             match session.send_command(Command::HallOfFameGroupPage { page }).await {
@@ -646,12 +753,12 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
     }
 
     // ── 1b) Optional honor-up-scan: scan extra pages ABOVE the 20-rank window until honor-rule yields nothing
-    if settings.honor_up_scan && page_low > 0 && !cancelled(&state).await {
+    if settings.honor_up_scan && page_low > 0 && !cancelled(&handles.progress).await {
         let mut extra_scanned = 0u32;
         let mut page = page_low - 1;
 
         loop {
-            if cancelled(&state).await {
+            if cancelled(&handles.progress).await {
                 log::info!("HoF scan cancelled during honor-up pages");
                 break;
             }
@@ -660,15 +767,15 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
             }
 
             {
-                let mut app = state.lock().await;
-                app.scan_progress.message = format!(
+                let mut p = handles.progress.lock().await;
+                p.scan.message = format!(
                     "HoF (Ehre-Regel): Seite {} wird geprüft...",
                     page + 1
                 );
             }
 
             let guilds_on_page = {
-            let mut app = state.lock().await;
+            let mut app = handles.state.lock().await;
             let idx = app.selected.unwrap();
             let session = &mut app.sessions[idx];
             match session.send_command(Command::HallOfFameGroupPage { page }).await {
@@ -749,11 +856,11 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
 
     // ── Phase 2: Load details for attackable guilds ───────────────────────
     {
-        let mut app = state.lock().await;
-        app.scan_progress.phase = "details".into();
-        app.scan_progress.current = 0;
-        app.scan_progress.total = attackable_count as u32;
-        app.scan_progress.message = format!(
+        let mut p = handles.progress.lock().await;
+        p.scan.phase = "details".into();
+        p.scan.current = 0;
+        p.scan.total = attackable_count as u32;
+        p.scan.message = format!(
             "Phase 2: Lade Details für {} angreifbare Gilden...",
             attackable_count
         );
@@ -762,15 +869,15 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
     let mut detailed_guilds: Vec<DetailedGuild> = Vec::new();
 
     for (i, (name, rank, honor, is_attacked)) in attackable_names.iter().enumerate() {
-        if cancelled(&state).await {
+        if cancelled(&handles.progress).await {
             log::info!("Details loading cancelled");
             break;
         }
 
         {
-            let mut app = state.lock().await;
-            app.scan_progress.current = i as u32 + 1;
-            app.scan_progress.message = format!(
+            let mut p = handles.progress.lock().await;
+            p.scan.current = i as u32 + 1;
+            p.scan.message = format!(
                 "Lade Gilde {}/{}: {}",
                 i + 1,
                 attackable_count,
@@ -779,7 +886,7 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
         }
 
         let detail = {
-            let mut app = state.lock().await;
+            let mut app = handles.state.lock().await;
             let idx = app.selected.unwrap();
             let session = &mut app.sessions[idx];
 
@@ -903,6 +1010,10 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
                             strict_fail_enemy_level,
                             strict_fail_own_level,
                             strict_fail_reason,
+                            sim_win_ratio: None,
+                            sim_mushrooms: None,
+                            sim_iterations: None,
+                            sim_evaluated_at: None,
                         })
                     } else {
                         log::warn!("Guild {} not in lookup after ViewGuild", name);
@@ -936,40 +1047,43 @@ async fn run_scan(state: SharedState) -> Result<(), String> {
         log::error!("Failed to save scan data: {}", e);
     }
 
-    let was_cancelled = cancelled(&state).await;
+    let was_cancelled = cancelled(&handles.progress).await;
 
     {
-        let mut app = state.lock().await;
+        let mut app = handles.state.lock().await;
         app.scan_data = Some(scan_data);
-        app.scan_progress = ScanProgress {
+    }
+    {
+        let mut p = handles.progress.lock().await;
+        p.scan = ScanProgress {
             running: false,
             phase: if was_cancelled { "aborted".into() } else { "done".into() },
-            current: app.scan_progress.current,
-            total: app.scan_progress.total,
+            current: p.scan.current,
+            total: p.scan.total,
             message: if was_cancelled {
                 "Scan abgebrochen – Teilergebnis gespeichert.".into()
             } else {
                 "Scan abgeschlossen.".into()
             },
         };
-        app.cancel_requested = false;
+        p.cancel_scan = false;
     }
 
     Ok(())
 }
 
 /// GET /api/progress – Poll scan progress
-async fn get_progress(State(state): State<SharedState>) -> impl IntoResponse {
-    let app = state.lock().await;
-    ok_response(app.scan_progress.clone())
+async fn get_progress(State(handles): State<AppHandles>) -> impl IntoResponse {
+    let p = handles.progress.lock().await;
+    ok_response(p.scan.clone())
 }
 
 /// POST /api/results – Get filtered results
 async fn get_results(
-    State(state): State<SharedState>,
+    State(handles): State<AppHandles>,
     Json(filter): Json<FilterRequest>,
 ) -> impl IntoResponse {
-    let app = state.lock().await;
+    let app = handles.state.lock().await;
 
     let scan = match &app.scan_data {
         Some(s) => s,
@@ -1025,12 +1139,12 @@ async fn get_results(
 
 /// POST /api/guild-details – View details of a specific guild (live request)
 async fn guild_details(
-    State(state): State<SharedState>,
+    State(handles): State<AppHandles>,
     Json(req): Json<GuildDetailRequest>,
 ) -> impl IntoResponse {
     // First check if we already have it in scan data
     {
-        let app = state.lock().await;
+        let app = handles.state.lock().await;
         if let Some(scan) = &app.scan_data {
             if let Some(guild) = scan.detailed_guilds.iter().find(|g| g.name == req.name) {
                 return Ok(ok_response(guild.clone()));
@@ -1039,7 +1153,7 @@ async fn guild_details(
     }
 
     // Otherwise fetch live
-    let mut app = state.lock().await;
+    let mut app = handles.state.lock().await;
     let idx = match app.selected {
         Some(i) => i,
         None => return Err(err_response::<DetailedGuild>("Kein Charakter ausgewählt")),
@@ -1081,6 +1195,10 @@ async fn guild_details(
                     strict_fail_enemy_level: None,
                     strict_fail_own_level: None,
                     strict_fail_reason: None,
+                    sim_win_ratio: None,
+                    sim_mushrooms: None,
+                    sim_iterations: None,
+                    sim_evaluated_at: None,
                 }))
             } else {
                 Err(err_response::<DetailedGuild>("Gilde nicht gefunden"))
@@ -1091,8 +1209,8 @@ async fn guild_details(
 }
 
 /// GET /api/status
-async fn status(State(state): State<SharedState>) -> impl IntoResponse {
-    let app = state.lock().await;
+async fn status(State(handles): State<AppHandles>) -> impl IntoResponse {
+    let app = handles.state.lock().await;
 
     #[derive(Serialize)]
     struct StatusInfo {
@@ -1115,19 +1233,26 @@ async fn status(State(state): State<SharedState>) -> impl IntoResponse {
 }
 
 /// POST /api/logout
-async fn logout(State(state): State<SharedState>) -> impl IntoResponse {
-    let mut app = state.lock().await;
-    app.sessions.clear();
-    app.selected = None;
-    app.own_guild = None;
-    app.scan_data = None;
-    app.scan_progress = ScanProgress::default();
+async fn logout(State(handles): State<AppHandles>) -> impl IntoResponse {
+    {
+        let mut app = handles.state.lock().await;
+        app.sessions.clear();
+        app.selected = None;
+        app.own_guild = None;
+        app.scan_data = None;
+        app.own_fighters_cache = None;
+    }
+    {
+        let mut p = handles.progress.lock().await;
+        p.scan = ScanProgress::default();
+        p.sim = SimProgress::default();
+    }
     ok_response("Ausgeloggt")
 }
 
 /// GET /api/export – Export scan data as JSON download
-async fn export_data(State(state): State<SharedState>) -> impl IntoResponse {
-    let app = state.lock().await;
+async fn export_data(State(handles): State<AppHandles>) -> impl IntoResponse {
+    let app = handles.state.lock().await;
     match &app.scan_data {
         Some(data) => {
             let json = serde_json::to_string_pretty(data).unwrap_or_default();
@@ -1145,6 +1270,358 @@ async fn export_data(State(state): State<SharedState>) -> impl IntoResponse {
             [("Content-Type", "text/plain"), ("Content-Disposition", "inline")],
             "Keine Scan-Daten vorhanden".to_string(),
         )),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Battle Simulation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Pause zwischen ViewPlayer-Calls beim Aufbau von Kampfwerten. Analog zu
+/// sfguildsv2/rust_examples/character_sync.rs (dort 700ms, mit Hinweis auf
+/// eine ~2-Minuten-Session-Grenze bei zu vielen ViewPlayer-Calls).
+const SIM_VIEWPLAYER_DELAY_MS: u64 = 700;
+
+/// Wendet das Pilzkatapult auf eine Gegner-Aufstellung an: pro geladenem
+/// Riesenpilz wird ein zufälliges Ziel gezogen (mit Zurücklegen — derselbe
+/// Gegner kann mehrfach getroffen werden) und ihm 50 Prozentpunkte seines
+/// ursprünglichen max_health additiv abgezogen (2 Treffer aufs selbe Ziel =
+/// 0% Leben übrig, nicht 25% wie bei multiplikativem Stacking). Gibt eine
+/// neue, unabhängige Kopie zurück — `base` bleibt unverändert, damit jede
+/// Simulations-Iteration mit frisch gewürfelten Zielen startet (echte
+/// Gildenkämpfe würfeln die Pilz-Ziele pro Kampf neu).
+fn apply_mushrooms(base: &[Fighter], mushrooms: u8) -> Vec<Fighter> {
+    let mut right = base.to_vec();
+    if mushrooms == 0 || right.is_empty() {
+        return right;
+    }
+    let mut hits = vec![0u32; right.len()];
+    for _ in 0..mushrooms {
+        let target = fastrand::usize(0..right.len());
+        hits[target] += 1;
+    }
+    for (fighter, hit_count) in right.iter_mut().zip(hits.iter()) {
+        if *hit_count > 0 {
+            let remaining = (1.0 - 0.5 * f64::from(*hit_count)).max(0.0);
+            fighter.max_health *= remaining;
+        }
+    }
+    right
+}
+
+/// Holt die Kampfwerte der eigenen aktiven Mitglieder — aus dem Cache, wenn
+/// er noch zum aktuellen Aktiv-Roster passt und nicht älter als
+/// `OWN_FIGHTERS_TTL_HOURS` ist, sonst frisch per ViewPlayer (+ wir selbst
+/// kostenlos aus dem GameState). Aktualisiert den Cache nach einem Refresh.
+async fn get_own_fighters(state: &SharedState) -> Result<Vec<Fighter>, String> {
+    let (idx, own_name, guild_name, mut active_names) = {
+        let app = state.lock().await;
+        let idx = app.selected.ok_or_else(|| "Kein Charakter ausgewählt".to_string())?;
+        let own_name = app.sessions[idx].username().to_string();
+        let og = app.own_guild.as_ref().ok_or_else(|| "Keine Gilde geladen".to_string())?;
+        let names: Vec<String> = og.active_members.iter().map(|m| m.name.clone()).collect();
+        (idx, own_name, og.name.clone(), names)
+    };
+    active_names.sort();
+
+    {
+        let app = state.lock().await;
+        if let Some(cache) = &app.own_fighters_cache {
+            let fresh_enough = chrono::Local::now().signed_duration_since(cache.fetched_at)
+                < chrono::Duration::hours(OWN_FIGHTERS_TTL_HOURS);
+            if fresh_enough && cache.guild_name == guild_name && cache.active_names == active_names {
+                log::info!("Own-fighters cache hit ({} Kämpfer, vom {})", cache.fighters.len(), cache.fetched_at);
+                return Ok(cache.fighters.clone());
+            }
+        }
+    }
+
+    log::info!("Own-fighters cache miss/stale, hole {} aktive Mitglieder frisch", active_names.len());
+
+    // Wir selbst: frisches Update, kostenlos aus dem GameState (kein ViewPlayer nötig).
+    let mut fighters: Vec<Fighter> = Vec::new();
+    {
+        let mut app = state.lock().await;
+        let session = &mut app.sessions[idx];
+        let gs = session
+            .send_command(Command::Update)
+            .await
+            .map_err(|e| format!("Update fehlgeschlagen: {:?}", e))?;
+        let squad = PlayerFighterSquad::new(gs);
+        fighters.push(Fighter::from(&squad.character));
+    }
+
+    // Alle anderen aktiven Mitglieder per ViewPlayer.
+    let mut calls_made = 0u32;
+    for name in active_names.iter().filter(|n| n.as_str() != own_name) {
+        if calls_made > 0 {
+            tokio::time::sleep(Duration::from_millis(SIM_VIEWPLAYER_DELAY_MS)).await;
+        }
+        calls_made += 1;
+
+        let uf = {
+            let mut app = state.lock().await;
+            let session = &mut app.sessions[idx];
+            match session.send_command(Command::ViewPlayer { ident: name.clone() }).await {
+                Ok(gs) => gs.lookup.lookup_name(name).map(UpgradeableFighter::from_other),
+                Err(e) => {
+                    log::warn!("ViewPlayer für eigenes Mitglied '{}' fehlgeschlagen: {:?}", name, e);
+                    None
+                }
+            }
+        };
+
+        match uf {
+            Some(uf) => fighters.push(Fighter::from(&uf)),
+            None => log::warn!("Kein ViewPlayer-Ergebnis für eigenes Mitglied '{}'", name),
+        }
+    }
+
+    {
+        let mut app = state.lock().await;
+        app.own_fighters_cache = Some(OwnFightersCache {
+            fetched_at: chrono::Local::now(),
+            guild_name,
+            active_names,
+            fighters: fighters.clone(),
+        });
+    }
+
+    Ok(fighters)
+}
+
+/// Simuliert den Kampf gegen eine einzelne Gilde. Die Gegner-Mitgliederliste
+/// wird aus den vorhandenen Scan-Daten übernommen (kein erneuter ViewGuild-
+/// Call nötig), nur die Kampfwerte selbst kommen per ViewPlayer frisch dazu.
+async fn simulate_one_guild(
+    state: &SharedState,
+    own_fighters: &[Fighter],
+    guild_name: &str,
+    mushrooms: u8,
+    iterations: u32,
+) -> Result<f64, String> {
+    let idx = {
+        let app = state.lock().await;
+        app.selected.ok_or_else(|| "Kein Charakter ausgewählt".to_string())?
+    };
+
+    let enemy_names: Vec<String> = {
+        let app = state.lock().await;
+        let scan = app.scan_data.as_ref().ok_or_else(|| "Keine Scan-Daten vorhanden".to_string())?;
+        let guild = scan
+            .detailed_guilds
+            .iter()
+            .find(|g| g.name == guild_name)
+            .ok_or_else(|| format!("Gilde '{}' nicht in Scan-Daten gefunden", guild_name))?;
+        guild.members.iter().map(|m| m.name.clone()).collect()
+    };
+
+    let mut enemy_fighters: Vec<Fighter> = Vec::new();
+    let mut calls_made = 0u32;
+    for name in &enemy_names {
+        if calls_made > 0 {
+            tokio::time::sleep(Duration::from_millis(SIM_VIEWPLAYER_DELAY_MS)).await;
+        }
+        calls_made += 1;
+
+        let uf = {
+            let mut app = state.lock().await;
+            let session = &mut app.sessions[idx];
+            match session.send_command(Command::ViewPlayer { ident: name.clone() }).await {
+                Ok(gs) => gs.lookup.lookup_name(name).map(UpgradeableFighter::from_other),
+                Err(e) => {
+                    log::warn!("ViewPlayer für Gegner '{}' fehlgeschlagen: {:?}", name, e);
+                    None
+                }
+            }
+        };
+
+        if let Some(uf) = uf {
+            enemy_fighters.push(Fighter::from(&uf));
+        }
+    }
+
+    if own_fighters.is_empty() || enemy_fighters.is_empty() {
+        return Err("Keine Kämpfer auf einer Seite, Simulation nicht möglich".to_string());
+    }
+
+    // Pilz-Ziele werden PRO Einzelkampf neu gewürfelt (siehe apply_mushrooms),
+    // deshalb manueller Loop mit iterations=1 statt einem simulate_battle-
+    // Aufruf mit iterations=N.
+    let mut won_fights = 0u32;
+    for _ in 0..iterations {
+        let right = apply_mushrooms(&enemy_fighters, mushrooms);
+        let result = simulate_battle(own_fighters, &right, 1, false);
+        won_fights += result.won_fights;
+    }
+
+    Ok(f64::from(won_fights) / f64::from(iterations))
+}
+
+/// POST /api/simulate – Start battle simulation for selected guilds (runs in background)
+async fn start_simulate(
+    State(handles): State<AppHandles>,
+    Json(req): Json<SimulateRequest>,
+) -> impl IntoResponse {
+    if req.guild_names.is_empty() {
+        return Err(err_response::<String>("Keine Gilden ausgewählt"));
+    }
+    {
+        let app = handles.state.lock().await;
+        if app.selected.is_none() || app.scan_data.is_none() {
+            return Err(err_response::<String>("Kein Charakter/Scan geladen"));
+        }
+    }
+    {
+        let p = handles.progress.lock().await;
+        if p.sim.running {
+            return Err(err_response::<String>("Simulation läuft bereits"));
+        }
+        if p.scan.running {
+            return Err(err_response::<String>("Bitte warten, bis der laufende Scan fertig ist"));
+        }
+    }
+    {
+        let mut p = handles.progress.lock().await;
+        p.cancel_sim = false;
+    }
+
+    let mushrooms = req.mushrooms.min(3);
+    let iterations = req.iterations.unwrap_or(2500).clamp(100, 20_000);
+    let guild_names = req.guild_names.clone();
+
+    let handles_clone = handles.clone();
+    tokio::spawn(async move {
+        run_simulate(handles_clone, guild_names, mushrooms, iterations).await;
+    });
+
+    Ok(ok_response("Simulation gestartet".to_string()))
+}
+
+/// The actual simulation logic, running as a background task
+async fn run_simulate(handles: AppHandles, guild_names: Vec<String>, mushrooms: u8, iterations: u32) {
+    {
+        let mut p = handles.progress.lock().await;
+        p.sim = SimProgress {
+            running: true,
+            phase: "own-roster".into(),
+            current: 0,
+            total: guild_names.len() as u32,
+            message: "Aktualisiere eigene Kampfwerte...".into(),
+        };
+    }
+
+    let own_fighters = match get_own_fighters(&handles.state).await {
+        Ok(f) => f,
+        Err(e) => {
+            let mut p = handles.progress.lock().await;
+            p.sim = SimProgress {
+                running: false,
+                phase: "error".into(),
+                current: 0,
+                total: 0,
+                message: format!("Fehler beim Laden eigener Kampfwerte: {}", e),
+            };
+            return;
+        }
+    };
+
+    {
+        let mut p = handles.progress.lock().await;
+        p.sim.phase = "guilds".into();
+        p.sim.message = "Simuliere Gilden...".into();
+    }
+
+    let mut results: Vec<(String, f64)> = Vec::new();
+
+    for (i, name) in guild_names.iter().enumerate() {
+        if handles.progress.lock().await.cancel_sim {
+            log::info!("Simulation cancelled");
+            break;
+        }
+        {
+            let mut p = handles.progress.lock().await;
+            p.sim.current = i as u32 + 1;
+            p.sim.message = format!("Simuliere {}/{}: {}", i + 1, guild_names.len(), name);
+        }
+
+        match simulate_one_guild(&handles.state, &own_fighters, name, mushrooms, iterations).await {
+            Ok(ratio) => results.push((name.clone(), ratio)),
+            Err(e) => log::warn!("Simulation für '{}' fehlgeschlagen: {}", name, e),
+        }
+    }
+
+    {
+        let mut app = handles.state.lock().await;
+        if let Some(scan) = &mut app.scan_data {
+            let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            for (name, ratio) in &results {
+                if let Some(g) = scan.detailed_guilds.iter_mut().find(|g| &g.name == name) {
+                    g.sim_win_ratio = Some(*ratio);
+                    g.sim_mushrooms = Some(mushrooms);
+                    g.sim_iterations = Some(iterations);
+                    g.sim_evaluated_at = Some(now.clone());
+                }
+            }
+            if let Err(e) = save_scan_data(scan) {
+                log::error!("Failed to save scan data after simulation: {}", e);
+            }
+        }
+    }
+
+    let was_cancelled = handles.progress.lock().await.cancel_sim;
+    {
+        let mut p = handles.progress.lock().await;
+        p.sim = SimProgress {
+            running: false,
+            phase: if was_cancelled { "aborted".into() } else { "done".into() },
+            current: p.sim.current,
+            total: p.sim.total,
+            message: if was_cancelled {
+                "Simulation abgebrochen.".into()
+            } else {
+                format!("Simulation abgeschlossen ({} Gilde(n)).", results.len())
+            },
+        };
+        p.cancel_sim = false;
+    }
+}
+
+/// POST /api/simulate/abort – Request cancellation of a running simulation
+async fn abort_simulate(State(handles): State<AppHandles>) -> impl IntoResponse {
+    let mut p = handles.progress.lock().await;
+    if !p.sim.running {
+        return ok_response("Keine laufende Simulation".to_string());
+    }
+    p.cancel_sim = true;
+    ok_response("Abbruch angefordert".to_string())
+}
+
+/// GET /api/simulate/progress – Poll simulation progress
+async fn get_sim_progress(State(handles): State<AppHandles>) -> impl IntoResponse {
+    let p = handles.progress.lock().await;
+    ok_response(p.sim.clone())
+}
+
+/// POST /api/refresh-own-fighters – Force-refresh the own-fighters cache,
+/// ignoring TTL and roster-change detection.
+async fn refresh_own_fighters_endpoint(State(handles): State<AppHandles>) -> impl IntoResponse {
+    {
+        let app = handles.state.lock().await;
+        if app.selected.is_none() {
+            return Err(err_response::<String>("Kein Charakter ausgewählt"));
+        }
+    }
+    {
+        let mut app = handles.state.lock().await;
+        app.own_fighters_cache = None;
+    }
+    match get_own_fighters(&handles.state).await {
+        Ok(fighters) => Ok(ok_response(format!(
+            "{} eigene Kampfwerte aktualisiert",
+            fighters.len()
+        ))),
+        Err(e) => Err(err_response::<String>(&e)),
     }
 }
 
@@ -1218,10 +1695,11 @@ async fn main() {
         selected: None,
         own_guild: None,
         scan_data: None,
-        scan_progress: ScanProgress::default(),
         scan_settings: ScanSettings::default(),
-        cancel_requested: false,
+        own_fighters_cache: None,
     }));
+    let progress: SharedProgress = Arc::new(Mutex::new(ProgressState::default()));
+    let handles = AppHandles { state, progress };
 
     let app = Router::new()
         .route("/api/login", post(login))
@@ -1232,13 +1710,17 @@ async fn main() {
         .route("/api/progress", get(get_progress))
         .route("/api/results", post(get_results))
         .route("/api/guild-details", post(guild_details))
+        .route("/api/simulate", post(start_simulate))
+        .route("/api/simulate/abort", post(abort_simulate))
+        .route("/api/simulate/progress", get(get_sim_progress))
+        .route("/api/refresh-own-fighters", post(refresh_own_fighters_endpoint))
         .route("/api/status", get(status))
         .route("/api/logout", post(logout))
         .route("/api/export", get(export_data))
         .fallback_service(
             ServeDir::new("/app/static").append_index_html_on_directories(true),
         )
-        .with_state(state);
+        .with_state(handles);
 
     let addr = "0.0.0.0:8080";
     log::info!("⚔️  SF Guild Scanner on http://{}", addr);
