@@ -27,6 +27,16 @@
 //!   TIME_BUDGET_S  — Hartes Zeitbudget für alle ViewPlayer-Calls, um die
 //!                    Session nicht durch zu viele Requests zu gefährden
 //!                    (optional, default 90)
+//!   MUSHROOMS      — Anzahl geladener Riesenpilze im Pilzkatapult, 0-3
+//!                    (optional, default 0). Jeder Pilz trifft VOR
+//!                    Kampfbeginn ein zufällig gewähltes Gegner-Mitglied
+//!                    und halbiert dessen max_health. Modelliert als
+//!                    unabhängige Ziehungen mit Zurücklegen (derselbe
+//!                    Gegner kann theoretisch mehrfach getroffen werden) —
+//!                    Annahme, noch nicht gegen echte Kämpfe verifiziert.
+//!                    Die Ziele werden PRO simuliertem Einzelkampf neu
+//!                    gewürfelt, nicht einmal für alle Iterationen, damit
+//!                    die Streuung realistisch bleibt.
 
 use std::{env, time::{Duration, Instant}};
 
@@ -81,6 +91,10 @@ async fn main() {
     let iterations: u32 = opt_env("ITERATIONS").and_then(|v| v.parse().ok()).unwrap_or(500);
     let delay_ms: u64 = opt_env("DELAY_MS").and_then(|v| v.parse().ok()).unwrap_or(700);
     let time_budget_s: u64 = opt_env("TIME_BUDGET_S").and_then(|v| v.parse().ok()).unwrap_or(90);
+    let mushrooms: u8 = opt_env("MUSHROOMS")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+        .min(3);
     let budget = Duration::from_secs(time_budget_s);
 
     // ── Login (gleiches Muster wie sfguildsv2/rust_examples) ──────────────
@@ -207,19 +221,45 @@ async fn main() {
     }
 
     let left: Vec<Fighter> = own_fighters.into_iter().map(|(_, f)| f).collect();
-    let right: Vec<Fighter> = enemy_fighters.into_iter().map(|(_, f)| f).collect();
+    let right_base: Vec<Fighter> = enemy_fighters.into_iter().map(|(_, f)| f).collect();
+
+    if mushrooms > 0 {
+        println!(
+            "Pilzkatapult: {mushrooms} Riesenpilz(e) geladen — Ziele werden pro \
+             Einzelkampf neu zufällig gewürfelt (je 50% max_health-Abzug)."
+        );
+    }
 
     // is_arena_battle=false: Gildenkämpfe sind kein 1v1-Arena-Duell, sondern
     // ein Last-Man-Standing-Gauntlet — Annahme, gegen echte Ergebnisse zu
     // prüfen.
-    let result = simulate_battle(&left, &right, iterations, false);
+    //
+    // Pilzkatapult wirkt VOR Kampfbeginn und trifft laut Helpshift "einen
+    // zufällig ausgewählten Gegner" pro Pilz — die Ziele müssen also pro
+    // simuliertem Einzelkampf neu gewürfelt werden (nicht einmal fürs
+    // gesamte Sample), sonst würde jede der `iterations` Wiederholungen
+    // denselben vorab geschwächten Gegner-Stand nutzen und die Streuung
+    // verfälschen. Deshalb hier ein manueller Loop mit iterations=1 pro
+    // Durchlauf statt einem einzelnen simulate_battle(..., iterations, ...)
+    // -Aufruf.
+    let mut won_fights = 0u32;
+    for _ in 0..iterations {
+        let mut right = right_base.clone();
+        for _ in 0..mushrooms {
+            let target = fastrand::usize(0..right.len());
+            right[target].max_health *= 0.5;
+        }
+        let result = simulate_battle(&left, &right, 1, false);
+        won_fights += result.won_fights;
+    }
+    let win_ratio = f64::from(won_fights) / f64::from(iterations);
 
     println!();
     println!("═══ Ergebnis ({iterations} simulierte Kämpfe) ═══");
     println!(
         "Sieg-Wahrscheinlichkeit: {:.1}% ({} von {})",
-        result.win_ratio * 100.0,
-        result.won_fights,
+        win_ratio * 100.0,
+        won_fights,
         iterations
     );
     println!();
