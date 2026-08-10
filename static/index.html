@@ -124,6 +124,9 @@
         <p>Finde angreifbare Gilden – nach Mitgliedern &amp; Level</p>
       </div>
       <div class="header-logout">
+        <button id="headerSwitchBtn" class="btn-s hidden" onclick="doSwitchCharacter()" title="Zu einem anderen Charakter auf diesem Account wechseln, ohne dich auszuloggen" style="margin-right:0.4rem">
+          🔄 Charakter wechseln
+        </button>
         <button id="headerLogoutBtn" class="btn-d hidden" onclick="doLogout()" title="Ausloggen">
           🚪 Ausloggen
         </button>
@@ -312,12 +315,18 @@ function showChars(chars){
 
 async function selectChar(idx){
   $('charCard').querySelectorAll('button').forEach(b=>b.disabled=true);
+  // Stand eines evtl. vorher gewählten Charakters (bei Charakterwechsel)
+  // nicht mit rüberschleppen.
+  hasScanData=false; scanDate='';
+  $('scanExisting').classList.add('hidden');
+  $('resultsCard').classList.add('hidden');
   try{
     const r=await api('select-character',{index:idx});
     if(!r.success){alert(r.error);return;}
     showGuild(r.data); setStep(3);
-    // Show logout button in header
+    // Logout- und Wechsel-Button im Header anzeigen
     $('headerLogoutBtn').classList.remove('hidden');
+    $('headerSwitchBtn').classList.remove('hidden');
     // Check for existing scan
     const st=await api('status');
     if(st.data?.has_scan_data){
@@ -325,6 +334,23 @@ async function selectChar(idx){
       $('scanDate').textContent=scanDate;
       $('scanExisting').classList.remove('hidden');
     }
+  }catch(e){alert('Fehler: '+e.message);}
+  finally{$('charCard').querySelectorAll('button').forEach(b=>b.disabled=false);}
+}
+
+// ── CHARAKTER WECHSELN ──────────────────────────────────────
+// Wechselt zu einem anderen Charakter auf demselben SSO-Account, ohne
+// sich neu einzuloggen (alle Charaktere sind schon aus dem Login bekannt).
+async function doSwitchCharacter(){
+  try{
+    const r=await api('characters');
+    if(!r.success){alert(r.error);return;}
+    $('guildCard').classList.add('hidden');
+    $('scanCard').classList.add('hidden');
+    $('resultsCard').classList.add('hidden');
+    $('modal').classList.add('hidden');
+    showChars(r.data);
+    setStep(2);
   }catch(e){alert('Fehler: '+e.message);}
 }
 
@@ -628,6 +654,7 @@ function renderDetail(g){
 async function doLogout(){
   await api('logout',{});
   $('headerLogoutBtn').classList.add('hidden');
+  $('headerSwitchBtn').classList.add('hidden');
   location.reload();
 }
 

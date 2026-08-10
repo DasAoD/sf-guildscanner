@@ -324,6 +324,30 @@ async fn login(
     }
 }
 
+/// GET /api/characters – Liste der bereits per SSO geladenen Charaktere,
+/// ohne erneuten Login. Ermöglicht den Wechsel zu einem anderen Charakter
+/// auf demselben Account, ohne sich neu einzuloggen.
+async fn list_characters(State(state): State<SharedState>) -> impl IntoResponse {
+    let app = state.lock().await;
+
+    if app.sessions.is_empty() {
+        return Err(err_response::<Vec<CharacterInfo>>("Nicht eingeloggt"));
+    }
+
+    let chars: Vec<CharacterInfo> = app
+        .sessions
+        .iter()
+        .enumerate()
+        .map(|(i, s)| CharacterInfo {
+            index: i,
+            name: s.username().to_string(),
+            server: s.server_url().to_string(),
+        })
+        .collect();
+
+    Ok(ok_response(chars))
+}
+
 /// POST /api/select-character
 async fn select_character(
     State(state): State<SharedState>,
@@ -335,7 +359,15 @@ async fn select_character(
         return Err(err_response::<OwnGuild>("Ungültiger Charakter-Index"));
     }
 
+    // Beim (Wieder-)Auswählen eines Charakters gehört der Stand des vorher
+    // ausgewählten Charakters nicht mehr zu diesem Kontext — sonst würden
+    // z.B. alte Scan-Daten fälschlich für die neue Gilde angezeigt, falls
+    // für die neue Gilde noch kein eigener Scan gespeichert ist.
     app.selected = Some(req.index);
+    app.own_guild = None;
+    app.scan_data = None;
+    app.scan_progress = ScanProgress::default();
+    app.cancel_requested = false;
 
     // Borrow session only as long as needed, then release it before touching other app fields.
     let server = app.sessions[req.index].server_url().to_string();
@@ -1193,6 +1225,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/api/login", post(login))
+        .route("/api/characters", get(list_characters))
         .route("/api/select-character", post(select_character))
         .route("/api/scan", post(start_scan))
         .route("/api/scan/abort", post(abort_scan))
