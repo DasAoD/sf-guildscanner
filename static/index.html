@@ -162,7 +162,13 @@
 
   <!-- OWN GUILD -->
   <div class="card hidden" id="guildCard">
-    <h2>🏰 <span id="guildName"></span></h2>
+    <h2 style="display:flex;align-items:center;gap:0.6rem">
+      🏰 <span id="guildName"></span>
+      <button id="refreshFightersBtn" class="btn-s" style="margin-left:auto;font-family:var(--fb);font-size:0.75rem;padding:0.25rem 0.6rem" onclick="doRefreshOwnFighters()" title="Kampfwerte (Ausrüstung/Attribute) der eigenen aktiven Mitglieder sofort neu laden, unabhängig vom automatischen Cache">
+        🔄 Eigene Kampfwerte aktualisieren
+      </button>
+    </h2>
+    <div id="refreshFightersMsg" style="font-size:0.78rem;color:var(--dim);margin-bottom:0.4rem"></div>
     <div class="stats" id="guildStats"></div>
     <details>
       <summary style="cursor:pointer;color:var(--dim);font-size:0.82rem">Mitglieder anzeigen</summary>
@@ -228,10 +234,26 @@
     </div>
 
     <!-- Selection info bar -->
-    <div id="selBar" style="margin-bottom:0.5rem;font-size:0.82rem;color:var(--dim);display:flex;align-items:center;gap:0.6rem">
+    <div id="selBar" style="margin-bottom:0.5rem;font-size:0.82rem;color:var(--dim);display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
       <span id="selInfo">0 Gilden ausgewählt</span>
       <button class="btn-s" style="padding:0.15rem 0.5rem;font-size:0.75rem" onclick="selectAllVisible()">Alle auswählen</button>
       <button class="btn-s" style="padding:0.15rem 0.5rem;font-size:0.75rem" onclick="deselectAll()">Auswahl aufheben</button>
+      <span style="margin-left:auto;display:flex;align-items:center;gap:0.4rem">
+        <label for="simMushrooms" style="text-transform:none;font-size:0.82rem;color:var(--dim)">🍄 Pilze</label>
+        <select id="simMushrooms" style="padding:0.2rem 0.4rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--txt)">
+          <option value="0" selected>0</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+        </select>
+        <button id="simBtn" class="btn-txt" style="padding:0.3rem 0.7rem;font-size:0.8rem" onclick="doSimulate()" title="Ausgewählte Gilden per Kampfsimulation gegen die eigene aktive Aufstellung durchrechnen">🎲 Simulieren</button>
+        <button id="simAbortBtn" class="btn-d" style="padding:0.3rem 0.7rem;font-size:0.8rem" onclick="doAbortSim()" disabled>⛔</button>
+      </span>
+    </div>
+
+    <div id="simProgressArea" class="progress hidden">
+      <div class="progress-bar"><div class="progress-fill" id="simFill" style="width:0%"></div><div class="progress-text" id="simText"></div></div>
+      <div class="progress-msg" id="simMsg"></div>
     </div>
 
     <div class="tbl-wrap">
@@ -245,6 +267,7 @@
           <th onclick="sortBy('avg_level')">Ø Level <span class="arrow" id="sort_avg_level"></span></th>
           <th onclick="sortBy('rank')">Rang <span class="arrow" id="sort_rank"></span></th>
           <th onclick="sortBy('honor')">Ehre <span class="arrow" id="sort_honor"></span></th>
+          <th onclick="sortBy('sim_win_ratio')">🎲 Sim <span class="arrow" id="sort_sim_win_ratio"></span></th>
           <th>Status</th>
           <th></th>
         </tr></thead>
@@ -495,6 +518,7 @@ function renderTable(){
 
   const sorted=[...results].sort((a,b)=>{
     let va=a[sortKey],vb=b[sortKey];
+    if(sortKey==='sim_win_ratio'){va=va??-1;vb=vb??-1;}
     if(typeof va==='string'){va=va.toLowerCase();vb=vb.toLowerCase();}
     if(va<vb)return sortDir==='asc'?-1:1;
     if(va>vb)return sortDir==='asc'?1:-1;
@@ -513,6 +537,13 @@ function renderTable(){
     const maxCls=g.max_level<ownMax?'pos':g.max_level>ownMax?'neg':'neu';
     const atk=g.is_attacked?'<span class="badge b-red">⚔ Angegriffen</span>':'<span class="badge b-grn">Frei</span>';
     const strictBadge=g.strict_evaluated?(g.strict_beatable?'<span class="badge b-grn">✔ Strikt</span>':'<span class="badge b-red">✖ Strikt</span>'):'';
+    let simCell='<span class="neu">–</span>';
+    if(g.sim_win_ratio!=null){
+      const pct=g.sim_win_ratio*100;
+      const cls=pct>=66?'pos':pct>=33?'neu':'neg';
+      const mush=g.sim_mushrooms?` <span title="Pilze im Katapult">🍄${g.sim_mushrooms}</span>`:'';
+      simCell=`<span class="${cls}">${pct.toFixed(1)}%</span>${mush}`;
+    }
 
     tr.innerHTML=`
       <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" onchange="updateSelInfo()"></td>
@@ -523,6 +554,7 @@ function renderTable(){
       <td class="${avgCls}">${(g.avg_level??0).toLocaleString('de',{minimumFractionDigits:1,maximumFractionDigits:1})}</td>
       <td>#${g.rank}</td>
       <td>${g.honor.toLocaleString('de')}</td>
+      <td>${simCell}</td>
       <td>${atk} ${strictBadge?'<br>'+strictBadge:''}</td>
       <td><button class="btn-s" style="padding:0.25rem 0.5rem;font-size:0.75rem" data-g="${esc(g.name)}" onclick="showDetail(this.dataset.g)">👁</button></td>`;
     tb.appendChild(tr);
@@ -583,6 +615,79 @@ function exportTxt(){
   URL.revokeObjectURL(a.href);
 }
 
+// ── KAMPF-SIMULATION ───────────────────────────────────────
+async function doRefreshOwnFighters(){
+  $('refreshFightersBtn').disabled=true;
+  $('refreshFightersMsg').textContent='Lädt eigene Kampfwerte (Ausrüstung/Attribute) neu...';
+  try{
+    const r=await api('refresh-own-fighters',{});
+    $('refreshFightersMsg').textContent=r.success?('✓ '+r.data):('Fehler: '+r.error);
+  }catch(e){$('refreshFightersMsg').textContent='Fehler: '+e.message;}
+  finally{$('refreshFightersBtn').disabled=false;}
+}
+
+async function doSimulate(){
+  const checked=[...document.querySelectorAll('.gsel:checked')].map(c=>c.dataset.name);
+  if(!checked.length){
+    alert('Keine Gilden ausgewählt.\nBitte zuerst die gewünschten Gilden per Checkbox markieren.');
+    return;
+  }
+  const mushrooms=parseInt($('simMushrooms').value||'0');
+
+  $('simBtn').disabled=true;
+  $('simAbortBtn').disabled=false;
+  $('simProgressArea').classList.remove('hidden');
+  $('simMsg').classList.remove('neg');
+
+  try{
+    const r=await api('simulate',{guild_names:checked,mushrooms});
+    if(!r.success){$('simMsg').textContent=r.error; $('simMsg').classList.add('neg'); $('simBtn').disabled=false; $('simAbortBtn').disabled=true; return;}
+    pollSimProgress();
+  }catch(e){$('simMsg').textContent='Fehler: '+e.message; $('simBtn').disabled=false; $('simAbortBtn').disabled=true;}
+}
+
+async function doAbortSim(){
+  $('simAbortBtn').disabled=true;
+  try{
+    const r=await api('simulate/abort',{});
+    $('simMsg').textContent=r.success?(r.data||'Abbruch angefordert...'):r.error;
+    if(!r.success)$('simMsg').classList.add('neg');
+  }catch(e){$('simMsg').textContent='Fehler: '+e.message; $('simMsg').classList.add('neg');}
+}
+
+async function pollSimProgress(){
+  try{
+    const r=await api('simulate/progress');
+    if(!r.success)return;
+    const p=r.data;
+    const pct=p.total>0?Math.round(p.current/p.total*100):0;
+
+    if(p.phase==='own-roster'){
+      $('simFill').style.width='5%';
+      $('simText').textContent='Eigene Kampfwerte...';
+    }else if(p.phase==='guilds'){
+      $('simFill').style.width=pct+'%';
+      $('simText').textContent=`${p.current} / ${p.total} Gilden`;
+    }else if(p.phase==='done' || p.phase==='aborted'){
+      $('simFill').style.width='100%';
+      $('simText').textContent=p.phase==='done'?'✓ Fertig!':'⚠️ Abgebrochen';
+      $('simBtn').disabled=false;
+      $('simAbortBtn').disabled=true;
+      $('simMsg').textContent=p.message;
+      applyFilter();
+      return;
+    }
+
+    $('simMsg').textContent=p.message;
+    if(p.running) setTimeout(pollSimProgress, 800);
+    else {
+      $('simBtn').disabled=false;
+      $('simAbortBtn').disabled=true;
+      if(p.phase==='error') $('simMsg').classList.add('neg');
+    }
+  }catch(e){setTimeout(pollSimProgress,2000);}
+}
+
 // ── DETAIL MODAL ───────────────────────────────────────────
 async function showDetail(name){
   $('mTitle').textContent='Lade...';
@@ -632,6 +737,17 @@ function renderDetail(g){
     </div>`;
   }
 
+  let simHtml='';
+  if(g.sim_win_ratio!=null){
+    const pct=g.sim_win_ratio*100;
+    const cls=pct>=66?'pos':pct>=33?'neu':'neg';
+    const badge=`<span class="${cls}" style="font-weight:700">${pct.toFixed(1)}%</span>`;
+    simHtml=`<div style="margin-bottom:0.8rem;padding:0.5rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.82rem">
+      <strong style="color:var(--gold)">🎲 Kampfsimulation:</strong> Sieg-Wahrscheinlichkeit ${badge}<br>
+      ${g.sim_mushrooms?`Pilzkatapult: <span class="b-gld badge">${g.sim_mushrooms} 🍄</span> | `:''}${g.sim_iterations} simulierte Kämpfe | Stand: ${esc(g.sim_evaluated_at||'')}
+    </div>`;
+  }
+
   const rows=g.members.sort((a,b)=>b.level-a.level).map(m=>
     `<tr><td>${esc(m.name)}</td><td>${m.level} ${levelBar(m.level,maxLvl)}</td></tr>`
   ).join('');
@@ -647,6 +763,7 @@ function renderDetail(g){
     </div>
     ${cmp}
     ${strictHtml}
+    ${simHtml}
     <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Level</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
