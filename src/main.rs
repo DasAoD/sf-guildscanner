@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -137,6 +138,10 @@ struct AppState {
     /// verworfen, wenn sich das Aktiv-Roster ändert, der Cache zu alt ist,
     /// oder der Charakter gewechselt wird.
     own_fighters_cache: Option<OwnFightersCache>,
+    /// Gecachte Kampfwerte gegnerischer Gilden, pro Gildenname. Verhindert,
+    /// dass ein wiederholter Simulationslauf für dieselbe(n) Gilde(n) (z.B.
+    /// mit anderer Pilz-Anzahl) erneut alle Mitglieder per ViewPlayer holt.
+    enemy_fighters_cache: HashMap<String, EnemyFightersCache>,
 }
 
 /// Fortschritts-/Abbruch-Zustand für Scan und Simulation, bewusst in einem
@@ -190,6 +195,26 @@ struct OwnFightersCache {
 /// bleibt, bevor er trotzdem aufgefrischt wird (z.B. weil sich jemand neu
 /// ausgerüstet/gelevelt hat, ohne dass sich die Aktiv-Liste ändert).
 const OWN_FIGHTERS_TTL_HOURS: i64 = 6;
+
+/// Gecachte, per ViewPlayer geholte Kampfwerte einer einzelnen gegnerischen
+/// Gilde.
+struct EnemyFightersCache {
+    fetched_at: chrono::DateTime<chrono::Local>,
+    /// Sortierte Mitgliedernamen, für die `fighters` geholt wurden —
+    /// Vergleichsbasis, um Roster-Änderungen (z.B. nach einem neuen Scan)
+    /// zu erkennen.
+    member_names: Vec<String>,
+    fighters: Vec<Fighter>,
+}
+
+/// Wie lange ein Cache der gegnerischen Kampfwerte ohne Roster-Änderung
+/// gültig bleibt.
+const ENEMY_FIGHTERS_TTL_HOURS: i64 = 6;
+
+/// Obergrenze für die Anzahl gleichzeitig gecachter gegnerischer Gilden,
+/// damit der Cache bei Nutzung über viele Sessions/Tage hinweg nicht
+/// unbegrenzt wächst. Beim Überschreiten wird der älteste Eintrag entfernt.
+const ENEMY_FIGHTERS_CACHE_MAX_ENTRIES: usize = 100;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct ScanSettings {
@@ -393,6 +418,7 @@ async fn login(
                 app.own_guild = None;
                 app.scan_data = None;
                 app.own_fighters_cache = None;
+                app.enemy_fighters_cache.clear();
             }
             {
                 let mut p = handles.progress.lock().await;
@@ -456,6 +482,7 @@ async fn select_character(
     app.own_guild = None;
     app.scan_data = None;
     app.own_fighters_cache = None;
+    app.enemy_fighters_cache.clear();
     {
         let mut p = handles.progress.lock().await;
         p.scan = ScanProgress::default();
@@ -1241,6 +1268,7 @@ async fn logout(State(handles): State<AppHandles>) -> impl IntoResponse {
         app.own_guild = None;
         app.scan_data = None;
         app.own_fighters_cache = None;
+        app.enemy_fighters_cache.clear();
     }
     {
         let mut p = handles.progress.lock().await;
@@ -1390,35 +1418,49 @@ async fn get_own_fighters(state: &SharedState) -> Result<Vec<Fighter>, String> {
     Ok(fighters)
 }
 
-/// Simuliert den Kampf gegen eine einzelne Gilde. Die Gegner-Mitgliederliste
-/// wird aus den vorhandenen Scan-Daten übernommen (kein erneuter ViewGuild-
-/// Call nötig), nur die Kampfwerte selbst kommen per ViewPlayer frisch dazu.
-async fn simulate_one_guild(
-    state: &SharedState,
-    own_fighters: &[Fighter],
-    guild_name: &str,
-    mushrooms: u8,
-    iterations: u32,
-) -> Result<f64, String> {
-    let idx = {
+/// Holt die Kampfwerte einer gegnerischen Gilde — aus dem Cache, wenn er
+/// noch zum aktuellen Mitglieder-Roster laut Scan-Daten passt und nicht
+/// älter als `ENEMY_FIGHTERS_TTL_HOURS` ist, sonst frisch per ViewPlayer.
+/// Verhindert, dass ein wiederholter Simulationslauf für dieselbe Gilde
+/// (z.B. mit anderer Pilz-Anzahl) erneut alle Mitglieder abfragt.
+async fn get_enemy_fighters(state: &SharedState, guild_name: &str) -> Result<Vec<Fighter>, String> {
+    let (idx, mut member_names) = {
         let app = state.lock().await;
-        app.selected.ok_or_else(|| "Kein Charakter ausgewählt".to_string())?
-    };
-
-    let enemy_names: Vec<String> = {
-        let app = state.lock().await;
+        let idx = app.selected.ok_or_else(|| "Kein Charakter ausgewählt".to_string())?;
         let scan = app.scan_data.as_ref().ok_or_else(|| "Keine Scan-Daten vorhanden".to_string())?;
         let guild = scan
             .detailed_guilds
             .iter()
             .find(|g| g.name == guild_name)
             .ok_or_else(|| format!("Gilde '{}' nicht in Scan-Daten gefunden", guild_name))?;
-        guild.members.iter().map(|m| m.name.clone()).collect()
+        let names: Vec<String> = guild.members.iter().map(|m| m.name.clone()).collect();
+        (idx, names)
     };
+    member_names.sort();
 
-    let mut enemy_fighters: Vec<Fighter> = Vec::new();
+    {
+        let app = state.lock().await;
+        if let Some(cache) = app.enemy_fighters_cache.get(guild_name) {
+            let fresh_enough = chrono::Local::now().signed_duration_since(cache.fetched_at)
+                < chrono::Duration::hours(ENEMY_FIGHTERS_TTL_HOURS);
+            if fresh_enough && cache.member_names == member_names {
+                log::info!(
+                    "Enemy-fighters cache hit für '{}' ({} Kämpfer, vom {})",
+                    guild_name, cache.fighters.len(), cache.fetched_at
+                );
+                return Ok(cache.fighters.clone());
+            }
+        }
+    }
+
+    log::info!(
+        "Enemy-fighters cache miss/stale für '{}', hole {} Mitglieder frisch",
+        guild_name, member_names.len()
+    );
+
+    let mut fighters: Vec<Fighter> = Vec::new();
     let mut calls_made = 0u32;
-    for name in &enemy_names {
+    for name in &member_names {
         if calls_made > 0 {
             tokio::time::sleep(Duration::from_millis(SIM_VIEWPLAYER_DELAY_MS)).await;
         }
@@ -1437,9 +1479,48 @@ async fn simulate_one_guild(
         };
 
         if let Some(uf) = uf {
-            enemy_fighters.push(Fighter::from(&uf));
+            fighters.push(Fighter::from(&uf));
         }
     }
+
+    {
+        let mut app = state.lock().await;
+        // Cache-Obergrenze: ältesten Eintrag entfernen, falls voll und
+        // diese Gilde noch nicht drin ist.
+        if app.enemy_fighters_cache.len() >= ENEMY_FIGHTERS_CACHE_MAX_ENTRIES
+            && !app.enemy_fighters_cache.contains_key(guild_name)
+        {
+            if let Some(oldest_key) = app
+                .enemy_fighters_cache
+                .iter()
+                .min_by_key(|(_, c)| c.fetched_at)
+                .map(|(k, _)| k.clone())
+            {
+                app.enemy_fighters_cache.remove(&oldest_key);
+            }
+        }
+        app.enemy_fighters_cache.insert(
+            guild_name.to_string(),
+            EnemyFightersCache {
+                fetched_at: chrono::Local::now(),
+                member_names,
+                fighters: fighters.clone(),
+            },
+        );
+    }
+
+    Ok(fighters)
+}
+
+/// Simuliert den Kampf gegen eine einzelne Gilde.
+async fn simulate_one_guild(
+    state: &SharedState,
+    own_fighters: &[Fighter],
+    guild_name: &str,
+    mushrooms: u8,
+    iterations: u32,
+) -> Result<f64, String> {
+    let enemy_fighters = get_enemy_fighters(state, guild_name).await?;
 
     if own_fighters.is_empty() || enemy_fighters.is_empty() {
         return Err("Keine Kämpfer auf einer Seite, Simulation nicht möglich".to_string());
@@ -1697,6 +1778,7 @@ async fn main() {
         scan_data: None,
         scan_settings: ScanSettings::default(),
         own_fighters_cache: None,
+        enemy_fighters_cache: HashMap::new(),
     }));
     let progress: SharedProgress = Arc::new(Mutex::new(ProgressState::default()));
     let handles = AppHandles { state, progress };
