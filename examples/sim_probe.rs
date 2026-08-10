@@ -21,7 +21,9 @@
 //!   SERVER_HOST    — z.B. f25.sfgame.net (Pflicht)
 //!   CHARACTER      — eigener Charaktername (Pflicht)
 //!   ENEMY_GUILD    — Name der zu simulierenden gegnerischen Gilde (Pflicht)
-//!   ITERATIONS     — Anzahl simulierter Kämpfe (optional, default 500)
+//!   ITERATIONS     — Anzahl simulierter Kämpfe (optional, default 2500,
+//!                    analog zum Default in sf-tools' Gildenkampf-Simulator
+//!                    https://github.com/HafisCZ/sf-tools/blob/gh-pages/guilds.html)
 //!   DELAY_MS       — Pause zwischen ViewPlayer-Calls (optional, default 700,
 //!                    siehe sfguildsv2/character_sync.rs zur Begründung)
 //!   TIME_BUDGET_S  — Hartes Zeitbudget für alle ViewPlayer-Calls, um die
@@ -89,7 +91,7 @@ async fn main() {
     let server_host = need_env("SERVER_HOST");
     let character = need_env("CHARACTER");
     let enemy_guild = need_env("ENEMY_GUILD");
-    let iterations: u32 = opt_env("ITERATIONS").and_then(|v| v.parse().ok()).unwrap_or(500);
+    let iterations: u32 = opt_env("ITERATIONS").and_then(|v| v.parse().ok()).unwrap_or(2500);
     let delay_ms: u64 = opt_env("DELAY_MS").and_then(|v| v.parse().ok()).unwrap_or(700);
     let time_budget_s: u64 = opt_env("TIME_BUDGET_S").and_then(|v| v.parse().ok()).unwrap_or(90);
     let mushrooms: u8 = opt_env("MUSHROOMS")
