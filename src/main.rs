@@ -89,6 +89,12 @@ struct DetailedGuild {
     total_level: u32,
     finished_raids: u16,
     is_attacked: bool,
+    /// Ist diese Gilde nach der Rang/Ehre-Regel aktuell angreifbar? Normale
+    /// Scan-Kandidaten sind das immer (true) — Gilden, die nur zum
+    /// Vormerken/Probesimulieren aus der vollständigen Ehrenhalle-Ansicht
+    /// hier landen, können false sein.
+    #[serde(default = "default_true")]
+    attackable: bool,
 
     // ── Strict mode evaluation (level-to-level, ascending) ─────────────────
     #[serde(default)]
@@ -228,6 +234,12 @@ struct ScanSettings {
     strict_mode: bool,
     /// Strict Top-N: compare enemy against our best N active members (N = enemy members)
     strict_topn: bool,
+    /// Komplette Ehrenhalle bis Rang 1 scannen, ohne Ehre-Filter und ohne
+    /// max_extra_up_pages als Grenze (nur günstige HoF-Seitenaufrufe, kein
+    /// ViewGuild pro Gilde — deshalb auch bei hohem eigenen Rang vertretbar).
+    /// Überschreibt honor_up_scan, wenn aktiv (default: false).
+    #[serde(default)]
+    full_up_scan: bool,
 }
 
 impl Default for ScanSettings {
@@ -238,6 +250,7 @@ impl Default for ScanSettings {
             max_extra_up_pages: 10,
             strict_mode: true,
             strict_topn: true,
+            full_up_scan: false,
         }
     }
 }
@@ -287,6 +300,8 @@ struct ScanRequest {
     strict_mode: Option<bool>,
     #[serde(default)]
     strict_topn: Option<bool>,
+    #[serde(default)]
+    full_up_scan: Option<bool>,
 }
 
 
@@ -321,15 +336,49 @@ struct FilterRequest {
     strict_only: Option<bool>,
 }
 
+/// Eine Gilde aus der Ehrenhalle-Rohliste (Phase 1), angereichert mit
+/// evtl. schon vorhandenen Simulationsergebnissen (falls über die
+/// "Vollständige Ehrenhalle"-Ansicht schon mal probesimuliert). Enthält
+/// bewusst KEINE Mitglieder-Level, da Phase 1 die nicht liefert — dafür
+/// müsste die Gilde erst per ViewGuild/Simulation nachgeladen werden.
+#[derive(Serialize)]
+struct HofGuildView {
+    name: String,
+    rank: u32,
+    leader: String,
+    member_count: u32,
+    honor: u32,
+    is_attacked: bool,
+    attackable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sim_win_ratio: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sim_mushrooms: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sim_iterations: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sim_evaluated_at: Option<String>,
+}
+
 #[derive(Serialize)]
 struct FilteredResult {
     own_guild: OwnGuild,
     guilds: Vec<DetailedGuild>,
+    /// Vollständige Ehrenhalle-Rohliste aus Phase 1 (alle gescannten
+    /// Gilden, auch nicht-angreifbare) — nur gefüllt, wenn `full_up_scan`
+    /// beim Scan aktiv war, sonst der übliche Rang/Ehre-Bereich.
+    hof_guilds: Vec<HofGuildView>,
     /// Total attackable guilds before filtering
     total_attackable: usize,
     /// After filtering
     filtered_count: usize,
     scanned_at: String,
+}
+
+/// Serde-Default für Felder, die bei älteren gespeicherten scan_*.json ohne
+/// dieses Feld als `true` gelten sollen (Abwärtskompatibilität).
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Serialize)]
@@ -600,6 +649,7 @@ async fn start_scan(
         if let Some(v) = req.max_extra_up_pages { s.max_extra_up_pages = v; }
         if let Some(v) = req.strict_mode { s.strict_mode = v; }
         if let Some(v) = req.strict_topn { s.strict_topn = v; }
+        if let Some(v) = req.full_up_scan { s.full_up_scan = v; }
         // clamp to sane values
         s.down_limit = s.down_limit.clamp(0, 50_000);
         s.max_extra_up_pages = s.max_extra_up_pages.clamp(0, 50);
@@ -779,8 +829,20 @@ async fn run_scan(handles: AppHandles) -> Result<(), String> {
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
 
-    // ── 1b) Optional honor-up-scan: scan extra pages ABOVE the 20-rank window until honor-rule yields nothing
-    if settings.honor_up_scan && page_low > 0 && !cancelled(&handles.progress).await {
+    // ── 1b) Honor-Up-Scan / komplette Ehrenhalle bis Rang 1 ────────────────
+    // full_up_scan: keine Ehre-Filterung, max_extra_up_pages wird ignoriert
+    // — geht immer bis Seite 0 (Rang 1) durch. Nur günstige HoF-
+    // Seitenaufrufe, kein ViewGuild pro Gilde, deshalb auch bei hohem
+    // eigenen Rang vertretbar.
+    // honor_up_scan (ohne full_up_scan): wie bisher ehre-gefiltert, aber
+    // OHNE verfrühten Abbruch bei der ersten leeren Seite — sonst könnte
+    // eine "Lücke" in der Ehre-Kette angreifbare Gilden dahinter
+    // verstecken. max_extra_up_pages ist jetzt die alleinige, ehrliche
+    // Grenze.
+    if (settings.full_up_scan || settings.honor_up_scan)
+        && page_low > 0
+        && !cancelled(&handles.progress).await
+    {
         let mut extra_scanned = 0u32;
         let mut page = page_low - 1;
 
@@ -789,16 +851,17 @@ async fn run_scan(handles: AppHandles) -> Result<(), String> {
                 log::info!("HoF scan cancelled during honor-up pages");
                 break;
             }
-            if extra_scanned >= settings.max_extra_up_pages {
+            if !settings.full_up_scan && extra_scanned >= settings.max_extra_up_pages {
                 break;
             }
 
             {
                 let mut p = handles.progress.lock().await;
-                p.scan.message = format!(
-                    "HoF (Ehre-Regel): Seite {} wird geprüft...",
-                    page + 1
-                );
+                p.scan.message = if settings.full_up_scan {
+                    format!("Vollständige Ehrenhalle: Seite {} wird geladen...", page + 1)
+                } else {
+                    format!("HoF (Ehre-Regel): Seite {} wird geprüft...", page + 1)
+                };
             }
 
             let guilds_on_page = {
@@ -814,7 +877,6 @@ async fn run_scan(handles: AppHandles) -> Result<(), String> {
             }
         };
 
-            let mut found_any = false;
             for hg in &guilds_on_page {
                 if hg.name == own_guild.name {
                     continue;
@@ -825,12 +887,11 @@ async fn run_scan(handles: AppHandles) -> Result<(), String> {
                     continue;
                 }
 
-                // Honor-rule: guild honor is at most 3000 above ours (or lower)
-                if hg.honor > own_honor.saturating_add(3000) {
+                // Honor-Regel nur anwenden, wenn wir nicht die komplette
+                // Ehrenhalle unabhängig davon sehen wollen.
+                if !settings.full_up_scan && hg.honor > own_honor.saturating_add(3000) {
                     continue;
                 }
-
-                found_any = true;
 
                 let attackable = is_attackable(own_rank, own_honor, hg.rank, hg.honor);
 
@@ -851,11 +912,6 @@ async fn run_scan(handles: AppHandles) -> Result<(), String> {
             }
 
             extra_scanned += 1;
-
-            // Stop as soon as a page yields no honor-rule candidates
-            if !found_any {
-                break;
-            }
 
             if page == 0 {
                 break;
@@ -1028,6 +1084,10 @@ async fn run_scan(handles: AppHandles) -> Result<(), String> {
                             total_level,
                             finished_raids: other.finished_raids,
                             is_attacked: *is_attacked,
+                            // attackable_names enthält per Konstruktion nur
+                            // Gilden, die is_attackable() bereits bestanden
+                            // haben (siehe Filter weiter oben).
+                            attackable: true,
                             strict_evaluated,
                             strict_beatable,
                             strict_own_active_members,
@@ -1117,8 +1177,11 @@ async fn get_results(
         None => return Err(err_response::<FilteredResult>("Keine Scan-Daten vorhanden")),
     };
 
-    let total_attackable = scan.detailed_guilds.len();
-    let strict_available = scan.detailed_guilds.iter().any(|g| g.strict_evaluated);
+    let total_attackable = scan.detailed_guilds.iter().filter(|g| g.attackable).count();
+    let strict_available = scan
+        .detailed_guilds
+        .iter()
+        .any(|g| g.attackable && g.strict_evaluated);
     // "winnable_only" default: if strict data exists, default to strict-only.
     let strict_only = filter.strict_only.unwrap_or(true);
 
@@ -1126,6 +1189,13 @@ async fn get_results(
         .detailed_guilds
         .iter()
         .filter(|g| {
+            // Nur echte Angriffs-Kandidaten in der normalen Ergebnistabelle
+            // — detailed_guilds kann inzwischen auch nicht-angreifbare
+            // Gilden enthalten, die nur zum Vormerken/Probesimulieren aus
+            // der vollständigen Ehrenhalle-Ansicht heraus geladen wurden.
+            if !g.attackable {
+                return false;
+            }
             // Filter: max members
             if let Some(max_m) = filter.max_members {
                 if g.member_count as u32 > max_m {
@@ -1155,9 +1225,35 @@ async fn get_results(
 
     let filtered_count = filtered.len();
 
+    // Vollständige Ehrenhalle-Rohliste, angereichert mit evtl. schon
+    // vorhandenen Simulationsergebnissen aus detailed_guilds (per Name
+    // nachgeschlagen, da eine probesimulierte, noch nicht angreifbare
+    // Gilde dort inzwischen ein Eintrag sein kann).
+    let hof_guilds: Vec<HofGuildView> = scan
+        .hof_guilds
+        .iter()
+        .map(|hg| {
+            let sim = scan.detailed_guilds.iter().find(|d| d.name == hg.name);
+            HofGuildView {
+                name: hg.name.clone(),
+                rank: hg.rank,
+                leader: hg.leader.clone(),
+                member_count: hg.member_count,
+                honor: hg.honor,
+                is_attacked: hg.is_attacked,
+                attackable: hg.attackable,
+                sim_win_ratio: sim.and_then(|d| d.sim_win_ratio),
+                sim_mushrooms: sim.and_then(|d| d.sim_mushrooms),
+                sim_iterations: sim.and_then(|d| d.sim_iterations),
+                sim_evaluated_at: sim.and_then(|d| d.sim_evaluated_at.clone()),
+            }
+        })
+        .collect();
+
     Ok(ok_response(FilteredResult {
         own_guild: scan.own_guild.clone(),
         guilds: filtered,
+        hof_guilds,
         total_attackable,
         filtered_count,
         scanned_at: scan.scanned_at.clone(),
@@ -1185,6 +1281,9 @@ async fn guild_details(
         Some(i) => i,
         None => return Err(err_response::<DetailedGuild>("Kein Charakter ausgewählt")),
     };
+    // Für die attackable-Berechnung gebraucht (own_rank/own_honor), bevor
+    // session gleich mutabel geliehen wird.
+    let own_rank_honor = app.own_guild.as_ref().map(|g| (g.rank, g.honor));
 
     let session = &mut app.sessions[idx];
     match session.send_command(Command::ViewGuild {
@@ -1201,6 +1300,11 @@ async fn guild_details(
                 let max_level = members.iter().map(|m| m.level).max().unwrap_or(0);
                 let min_level = members.iter().map(|m| m.level).min().unwrap_or(0);
                 let total_level: u32 = members.iter().map(|m| m.level as u32).sum();
+                let attackable = own_rank_honor
+                    .map(|(own_rank, own_honor)| {
+                        is_attackable(own_rank, own_honor, other.rank as u32, other.honor)
+                    })
+                    .unwrap_or(false);
 
                 Ok(ok_response(DetailedGuild {
                     name: req.name,
@@ -1213,6 +1317,7 @@ async fn guild_details(
                     total_level,
                     finished_raids: other.finished_raids,
                     is_attacked: false,
+                    attackable,
                     strict_evaluated: false,
                     strict_beatable: false,
                     strict_own_active_members: 0,
@@ -1418,12 +1523,104 @@ async fn get_own_fighters(state: &SharedState) -> Result<Vec<Fighter>, String> {
     Ok(fighters)
 }
 
+/// Stellt sicher, dass eine Gilde als `DetailedGuild`-Eintrag in den
+/// Scan-Daten existiert. Gilden aus der "Vollständigen Ehrenhalle"-Ansicht
+/// sind (noch) nicht angreifbar und wurden deshalb nie über Phase 2 des
+/// Scans geladen — hier werden sie bei Bedarf live per ViewGuild
+/// nachgeholt, ohne Strict-Mode-Auswertung (die bräuchte den
+/// own_active_levels-Schnappschuss eines laufenden Scans, den es außerhalb
+/// eines Scans nicht gibt).
+async fn ensure_detailed_guild(state: &SharedState, guild_name: &str) -> Result<(), String> {
+    {
+        let app = state.lock().await;
+        let scan = app.scan_data.as_ref().ok_or_else(|| "Keine Scan-Daten vorhanden".to_string())?;
+        if scan.detailed_guilds.iter().any(|g| g.name == guild_name) {
+            return Ok(());
+        }
+    }
+
+    log::info!("Gilde '{}' noch nicht in Scan-Daten, hole live per ViewGuild nach", guild_name);
+
+    let (idx, own_rank_honor) = {
+        let app = state.lock().await;
+        let idx = app.selected.ok_or_else(|| "Kein Charakter ausgewählt".to_string())?;
+        let own_rank_honor = app.own_guild.as_ref().map(|g| (g.rank, g.honor));
+        (idx, own_rank_honor)
+    };
+
+    let mut app = state.lock().await;
+    let session = &mut app.sessions[idx];
+    let gs = session
+        .send_command(Command::ViewGuild { guild_ident: guild_name.to_string() })
+        .await
+        .map_err(|e| format!("ViewGuild für '{}' fehlgeschlagen: {:?}", guild_name, e))?;
+
+    let other = gs
+        .lookup
+        .guilds
+        .get(guild_name)
+        .ok_or_else(|| format!("Gilde '{}' nicht gefunden", guild_name))?;
+
+    let members: Vec<MemberInfo> = other
+        .members
+        .iter()
+        .map(|m| MemberInfo {
+            name: m.name.clone(),
+            level: m.level,
+            last_online: None,
+            offline_days: None,
+            is_active_24h: None,
+        })
+        .collect();
+    let max_level = members.iter().map(|m| m.level).max().unwrap_or(0);
+    let min_level = members.iter().map(|m| m.level).min().unwrap_or(0);
+    let total_level: u32 = members.iter().map(|m| m.level as u32).sum();
+    let attackable = own_rank_honor
+        .map(|(own_rank, own_honor)| is_attackable(own_rank, own_honor, other.rank as u32, other.honor))
+        .unwrap_or(false);
+
+    let detailed = DetailedGuild {
+        name: guild_name.to_string(),
+        rank: other.rank as u32,
+        honor: other.honor,
+        member_count: members.len(),
+        members,
+        max_level,
+        min_level,
+        total_level,
+        finished_raids: other.finished_raids,
+        is_attacked: false,
+        attackable,
+        strict_evaluated: false,
+        strict_beatable: false,
+        strict_own_active_members: 0,
+        strict_topn: false,
+        strict_topn_n: 0,
+        strict_fail_index: None,
+        strict_fail_enemy_level: None,
+        strict_fail_own_level: None,
+        strict_fail_reason: None,
+        sim_win_ratio: None,
+        sim_mushrooms: None,
+        sim_iterations: None,
+        sim_evaluated_at: None,
+    };
+
+    if let Some(scan) = app.scan_data.as_mut() {
+        scan.detailed_guilds.push(detailed);
+    }
+
+    Ok(())
+}
+
 /// Holt die Kampfwerte einer gegnerischen Gilde — aus dem Cache, wenn er
 /// noch zum aktuellen Mitglieder-Roster laut Scan-Daten passt und nicht
 /// älter als `ENEMY_FIGHTERS_TTL_HOURS` ist, sonst frisch per ViewPlayer.
 /// Verhindert, dass ein wiederholter Simulationslauf für dieselbe Gilde
 /// (z.B. mit anderer Pilz-Anzahl) erneut alle Mitglieder abfragt.
 async fn get_enemy_fighters(state: &SharedState, guild_name: &str) -> Result<Vec<Fighter>, String> {
+    ensure_detailed_guild(state, guild_name).await?;
+
     let (idx, mut member_names) = {
         let app = state.lock().await;
         let idx = app.selected.ok_or_else(|| "Kein Charakter ausgewählt".to_string())?;
