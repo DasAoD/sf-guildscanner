@@ -196,6 +196,9 @@
         <input type="checkbox" id="strictTopN" checked><label for="strictTopN" style="white-space:nowrap">Top-N Strikt</label>
       </div>
       <div class="fg"><label>Max Extra-Seiten (oben)</label><input type="number" id="extraUpPages" value="10" min="0" max="50"></div>
+      <div class="fg" style="flex:0;min-width:auto;flex-direction:row;align-items:center;gap:0.4rem;padding-bottom:0.25rem">
+        <input type="checkbox" id="fullUpScan"><label for="fullUpScan" style="white-space:nowrap" title="Scannt die komplette Ehrenhalle bis Rang 1, unabhängig von der Ehre-Regel und von Max Extra-Seiten. Zeigt auch (noch) nicht angreifbare Gilden zum Vormerken/Probesimulieren an.">Komplette Ehrenhalle bis Rang 1</label>
+      </div>
     </div>
 
     <div id="scanExisting" class="hidden" style="margin-bottom:0.8rem;padding:0.6rem;background:rgba(74,154,74,0.08);border:1px solid rgba(74,154,74,0.2);border-radius:4px;font-size:0.82rem;color:#6cc06c">
@@ -236,8 +239,8 @@
     <!-- Selection info bar -->
     <div id="selBar" style="margin-bottom:0.5rem;font-size:0.82rem;color:var(--dim);display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
       <span id="selInfo">0 Gilden ausgewählt</span>
-      <button class="btn-s" style="padding:0.15rem 0.5rem;font-size:0.75rem" onclick="selectAllVisible()">Alle auswählen</button>
-      <button class="btn-s" style="padding:0.15rem 0.5rem;font-size:0.75rem" onclick="deselectAll()">Auswahl aufheben</button>
+      <button class="btn-s" style="padding:0.15rem 0.5rem;font-size:0.75rem" onclick="selectAllVisible('rBody')">Alle auswählen</button>
+      <button class="btn-s" style="padding:0.15rem 0.5rem;font-size:0.75rem" onclick="deselectAll('rBody')">Auswahl aufheben</button>
       <span style="margin-left:auto;display:flex;align-items:center;gap:0.4rem">
         <label for="simMushrooms" style="text-transform:none;font-size:0.82rem;color:var(--dim)">🍄 Pilze</label>
         <select id="simMushrooms" style="padding:0.2rem 0.4rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--txt)">
@@ -259,7 +262,7 @@
     <div class="tbl-wrap">
       <table id="rTable">
         <thead><tr>
-          <th class="no-sort" style="width:32px"><input type="checkbox" id="selAll" title="Alle auswählen / abwählen" onchange="toggleAll(this)"></th>
+          <th class="no-sort" style="width:32px"><input type="checkbox" id="selAll" title="Alle auswählen / abwählen" onchange="toggleAll(this,'rBody')"></th>
           <th onclick="sortBy('name')">Gilde <span class="arrow" id="sort_name"></span></th>
           <th onclick="sortBy('member_count')">Mitgl. <span class="arrow" id="sort_member_count"></span></th>
           <th onclick="sortBy('max_level')">Max Lvl <span class="arrow" id="sort_max_level"></span></th>
@@ -272,6 +275,54 @@
           <th></th>
         </tr></thead>
         <tbody id="rBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- VOLLSTÄNDIGE EHRENHALLE (inkl. nicht angreifbare Gilden zum Vormerken/Probesimulieren) -->
+  <div class="card hidden" id="hofCard">
+    <h2>🏆 Vollständige Ehrenhalle <span id="hofCount" style="font-family:var(--fb);font-size:0.8rem;color:var(--dim);margin-left:auto"></span></h2>
+    <p style="font-size:0.82rem;color:var(--dim);margin-bottom:0.6rem">
+      Alle beim Scan gesehenen Gilden, auch solche, die aktuell <strong>noch nicht</strong> angreifbar sind. Nützlich, um Gilden mit guter Mitgliederzahl vorab zu simulieren, bevor ihr rangmäßig in Reichweite kommt.
+    </p>
+
+    <div class="form-row" style="margin-bottom:0.8rem">
+      <div class="fg"><label>Max Mitglieder</label><input type="number" id="fHofMembers" placeholder="alle" min="1" max="50"></div>
+      <div class="fg" style="flex:0;min-width:auto;flex-direction:row;align-items:center;gap:0.4rem;padding-bottom:0.25rem">
+        <input type="checkbox" id="fHofOnlyNotAttackable"><label for="fHofOnlyNotAttackable" style="white-space:nowrap">Nur (noch) nicht angreifbare</label>
+      </div>
+      <button onclick="renderHofTable()">Filtern</button>
+    </div>
+
+    <div id="hofSelBar" style="margin-bottom:0.5rem;font-size:0.82rem;color:var(--dim);display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+      <span id="selInfoHof">0 Gilden ausgewählt</span>
+      <button class="btn-s" style="padding:0.15rem 0.5rem;font-size:0.75rem" onclick="selectAllVisible('hofBody')">Alle auswählen</button>
+      <button class="btn-s" style="padding:0.15rem 0.5rem;font-size:0.75rem" onclick="deselectAll('hofBody')">Auswahl aufheben</button>
+      <span style="margin-left:auto;display:flex;align-items:center;gap:0.4rem">
+        <label for="simMushroomsHof" style="text-transform:none;font-size:0.82rem;color:var(--dim)">🍄 Pilze</label>
+        <select id="simMushroomsHof" style="padding:0.2rem 0.4rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--txt)">
+          <option value="0" selected>0</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+        </select>
+        <button class="btn-txt" style="padding:0.3rem 0.7rem;font-size:0.8rem" onclick="doSimulate('simMushroomsHof')" title="Ausgewählte Gilden per Kampfsimulation gegen die eigene aktive Aufstellung durchrechnen — funktioniert auch für noch nicht angreifbare Gilden (wird bei Bedarf live nachgeladen)">🎲 Simulieren</button>
+      </span>
+    </div>
+
+    <div class="tbl-wrap">
+      <table id="hofTable">
+        <thead><tr>
+          <th class="no-sort" style="width:32px"><input type="checkbox" id="selAllHof" title="Alle auswählen / abwählen" onchange="toggleAll(this,'hofBody')"></th>
+          <th onclick="sortHofBy('rank')">Rang <span class="arrow" id="hsort_rank"></span></th>
+          <th onclick="sortHofBy('name')">Gilde <span class="arrow" id="hsort_name"></span></th>
+          <th onclick="sortHofBy('member_count')">Mitgl. <span class="arrow" id="hsort_member_count"></span></th>
+          <th onclick="sortHofBy('honor')">Ehre <span class="arrow" id="hsort_honor"></span></th>
+          <th onclick="sortHofBy('attackable')">Angreifbar <span class="arrow" id="hsort_attackable"></span></th>
+          <th onclick="sortHofBy('sim_win_ratio')">🎲 Sim <span class="arrow" id="hsort_sim_win_ratio"></span></th>
+          <th></th>
+        </tr></thead>
+        <tbody id="hofBody"></tbody>
       </table>
     </div>
   </div>
@@ -294,6 +345,8 @@ const $=id=>document.getElementById(id);
 
 let results=[], ownGuild=null;
 let sortKey='rank', sortDir='asc';
+let hofResults=[];
+let hofSortKey='rank', hofSortDir='asc';
 let hasScanData=false, scanDate='';
 // Namen der per Checkbox ausgewählten Gilden — bleibt über renderTable()-
 // Neuaufbauten hinweg bestehen (z.B. nach applyFilter() nach Simulationsende),
@@ -424,6 +477,7 @@ async function doScan(){
   const strict=$('strictMode').checked;
   const strictTopN=$('strictTopN')?$('strictTopN').checked:true;
   const extra=parseInt($('extraUpPages').value||'10');
+  const fullUpScan=$('fullUpScan')?$('fullUpScan').checked:false;
 
   $('scanBtn').disabled=true;
   $('abortBtn').disabled=false;
@@ -431,7 +485,7 @@ async function doScan(){
   $('pMsg').classList.remove('neg');
 
   try{
-    const r=await api('scan',{down_limit:down,honor_up_scan:honorUp,max_extra_up_pages:extra,strict_mode:strict,strict_topn:strictTopN});
+    const r=await api('scan',{down_limit:down,honor_up_scan:honorUp,max_extra_up_pages:extra,strict_mode:strict,strict_topn:strictTopN,full_up_scan:fullUpScan});
     if(!r.success){$('pMsg').textContent=r.error; $('pMsg').classList.add('neg'); $('scanBtn').disabled=false; $('abortBtn').disabled=true; return;}
     pollProgress();
   }catch(e){$('pMsg').textContent='Fehler: '+e.message; $('scanBtn').disabled=false; $('abortBtn').disabled=true;}
@@ -506,6 +560,12 @@ async function applyFilter(){
     $('resultsCard').classList.remove('hidden');
     setStep(4);
     renderTable();
+
+    hofResults=r.data.hof_guilds||[];
+    if(hofResults.length){
+      $('hofCard').classList.remove('hidden');
+      renderHofTable();
+    }
   }catch(e){alert('Fehler: '+e.message);}
 }
 
@@ -572,6 +632,65 @@ function sortBy(key){
   renderTable();
 }
 
+// ── VOLLSTÄNDIGE EHRENHALLE ──────────────────────────────────
+function sortHofBy(key){
+  if(hofSortKey===key)hofSortDir=hofSortDir==='asc'?'desc':'asc';
+  else{hofSortKey=key;hofSortDir=key==='name'?'asc':'asc';}
+  renderHofTable();
+}
+
+function renderHofTable(){
+  const maxM=$('fHofMembers').value?parseInt($('fHofMembers').value):null;
+  const onlyNotAttackable=$('fHofOnlyNotAttackable').checked;
+
+  const visible=hofResults.filter(g=>{
+    if(maxM!=null && g.member_count>maxM) return false;
+    if(onlyNotAttackable && g.attackable) return false;
+    return true;
+  });
+
+  $('hofCount').textContent=`${visible.length} / ${hofResults.length} Gilden`;
+
+  document.querySelectorAll('#hofTable th .arrow').forEach(a=>a.textContent='');
+  const arrow=$('hsort_'+hofSortKey);
+  if(arrow)arrow.textContent=hofSortDir==='asc'?' ▲':' ▼';
+
+  const sorted=[...visible].sort((a,b)=>{
+    let va=a[hofSortKey],vb=b[hofSortKey];
+    if(hofSortKey==='sim_win_ratio'){va=va??-1;vb=vb??-1;}
+    if(typeof va==='boolean'){va=va?1:0;vb=vb?1:0;}
+    if(typeof va==='string'){va=va.toLowerCase();vb=vb.toLowerCase();}
+    if(va<vb)return hofSortDir==='asc'?-1:1;
+    if(va>vb)return hofSortDir==='asc'?1:-1;
+    return 0;
+  });
+
+  const tb=$('hofBody'); tb.innerHTML='';
+  sorted.forEach(g=>{
+    const tr=document.createElement('tr');
+    const atkBadge=g.attackable?'<span class="badge b-grn">✔ Ja</span>':'<span class="badge b-red">✖ Nein</span>';
+    let simCell='<span class="neu">–</span>';
+    if(g.sim_win_ratio!=null){
+      const pct=g.sim_win_ratio*100;
+      const cls=pct>=66?'pos':pct>=33?'neu':'neg';
+      const mush=g.sim_mushrooms?` <span title="Pilze im Katapult">🍄${g.sim_mushrooms}</span>`:'';
+      simCell=`<span class="${cls}">${pct.toFixed(1)}%</span>${mush}`;
+    }
+    tr.innerHTML=`
+      <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" ${selectedGuilds.has(g.name)?'checked':''} onchange="toggleGuildSelection(this)"></td>
+      <td>#${g.rank}</td>
+      <td><strong>${esc(g.name)}</strong></td>
+      <td>${g.member_count}</td>
+      <td>${g.honor.toLocaleString('de')}</td>
+      <td>${atkBadge}</td>
+      <td>${simCell}</td>
+      <td><button class="btn-s" style="padding:0.25rem 0.5rem;font-size:0.75rem" data-g="${esc(g.name)}" onclick="showDetail(this.dataset.g)">👁</button></td>`;
+    tb.appendChild(tr);
+  });
+
+  updateSelInfo();
+}
+
 // ── CHECKBOX SELECTION ─────────────────────────────────────
 // selectedGuilds ist die eigentliche Quelle der Wahrheit für die Auswahl
 // (übersteht renderTable()-Neuaufbauten, z.B. nach einer Simulation); die
@@ -582,8 +701,16 @@ function toggleGuildSelection(cb){
   updateSelInfo();
 }
 
-function toggleAll(cb){
-  document.querySelectorAll('.gsel').forEach(c=>{
+// Es gibt zwei Tabellen mit eigenen Checkboxen (Ergebnisse + Vollständige
+// Ehrenhalle), die sich denselben selectedGuilds-Auswahltopf teilen — aber
+// "Alle auswählen"/"Auswahl aufheben" sollen nur die jeweils EIGENE Tabelle
+// betreffen, nicht beide gleichzeitig. Deshalb hier per tbody-Id skopiert.
+function scopeEl(scopeId){
+  return scopeId ? $(scopeId) : document;
+}
+
+function toggleAll(cb, scopeId){
+  scopeEl(scopeId).querySelectorAll('.gsel').forEach(c=>{
     c.checked=cb.checked;
     if(cb.checked) selectedGuilds.add(c.dataset.name);
     else selectedGuilds.delete(c.dataset.name);
@@ -591,33 +718,48 @@ function toggleAll(cb){
   updateSelInfo();
 }
 
-function selectAllVisible(){
-  document.querySelectorAll('.gsel').forEach(c=>{
+function selectAllVisible(scopeId){
+  scopeEl(scopeId).querySelectorAll('.gsel').forEach(c=>{
     c.checked=true;
     selectedGuilds.add(c.dataset.name);
   });
-  $('selAll').checked=true;
   updateSelInfo();
 }
 
-function deselectAll(){
-  document.querySelectorAll('.gsel').forEach(c=>{
+function deselectAll(scopeId){
+  scopeEl(scopeId).querySelectorAll('.gsel').forEach(c=>{
     c.checked=false;
     selectedGuilds.delete(c.dataset.name);
   });
-  $('selAll').checked=false;
   updateSelInfo();
 }
 
+// Zähler-Text ist bewusst über beide Tabellen kombiniert (zeigt die
+// gesamte Simulations-Warteschlange); die Header-Checkbox jeder Tabelle
+// spiegelt aber nur den Zustand ihrer EIGENEN Zeilen.
 function updateSelInfo(){
   const total=document.querySelectorAll('.gsel').length;
   const checked=document.querySelectorAll('.gsel:checked').length;
-  $('selInfo').textContent=`${checked} von ${total} Gilden ausgewählt`;
-  // Sync header checkbox state
+  const text=`${checked} von ${total} Gilden ausgewählt`;
+  $('selInfo').textContent=text;
+  const hofInfo=$('selInfoHof'); if(hofInfo) hofInfo.textContent=text;
+
+  syncSelectAllCheckbox('rBody','selAll');
+  syncSelectAllCheckbox('hofBody','selAllHof');
+}
+
+function syncSelectAllCheckbox(scopeId, checkboxId){
+  const scope=$(scopeId), cb=$(checkboxId);
+  if(!scope || !cb) return;
+  const total=scope.querySelectorAll('.gsel').length;
+  const checked=scope.querySelectorAll('.gsel:checked').length;
   if(total>0){
-    $('selAll').indeterminate = checked>0 && checked<total;
-    if(checked===total) $('selAll').checked=true;
-    if(checked===0) $('selAll').checked=false;
+    cb.indeterminate = checked>0 && checked<total;
+    if(checked===total) cb.checked=true;
+    if(checked===0) cb.checked=false;
+  } else {
+    cb.indeterminate=false;
+    cb.checked=false;
   }
 }
 
@@ -650,14 +792,17 @@ async function doRefreshOwnFighters(){
   finally{$('refreshFightersBtn').disabled=false;}
 }
 
-async function doSimulate(){
+async function doSimulate(mushroomSelectId){
   const checked=[...document.querySelectorAll('.gsel:checked')].map(c=>c.dataset.name);
   if(!checked.length){
     alert('Keine Gilden ausgewählt.\nBitte zuerst die gewünschten Gilden per Checkbox markieren.');
     return;
   }
-  const mushrooms=parseInt($('simMushrooms').value||'0');
+  const mushrooms=parseInt($(mushroomSelectId||'simMushrooms').value||'0');
 
+  // Progress-Anzeige/Buttons sind bewusst gemeinsam für beide Tabellen
+  // (Ergebnisse + Vollständige Ehrenhalle) — es kann eh immer nur eine
+  // Simulation gleichzeitig laufen.
   $('simBtn').disabled=true;
   $('simAbortBtn').disabled=false;
   $('simProgressArea').classList.remove('hidden');
