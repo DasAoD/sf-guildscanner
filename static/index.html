@@ -120,7 +120,7 @@
   <div class="c" style="padding-top:0;padding-bottom:0">
     <div class="header-inner">
       <div class="header-title">
-        <h1>⚔️ SF Gilden-Scanner</h1>
+        <h1>⚔️ SF Gilden-Scanner <span id="appVersion" style="font-family:var(--fb);font-size:0.7rem;font-weight:600;color:var(--dim);vertical-align:middle"></span></h1>
         <p>Finde angreifbare Gilden – nach Mitgliedern &amp; Level</p>
       </div>
       <div class="header-logout">
@@ -945,6 +945,17 @@ async function doLogout(){
 }
 
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+
+// ── VERSION ────────────────────────────────────────────────
+(async function(){
+  try{
+    const r=await api('version');
+    if(r.success && r.data){
+      $('appVersion').textContent=`v${r.data}`;
+      document.title=`⚔️ SF Gilden-Scanner v${r.data}`;
+    }
+  }catch(e){/* Version ist rein kosmetisch, kein Fehler nötig */}
+})();
 
 (function(){
   const sm=$('strictMode');
