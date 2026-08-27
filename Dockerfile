@@ -42,6 +42,10 @@ LABEL version="${VERSION}" \
       org.opencontainers.image.source="https://github.com/DasAoD/sf-guildscanner" \
       org.opencontainers.image.description="SF Gilden-Scanner – findet angreifbare Gilden in Shakes & Fidget. Rust + Axum, Web UI, Docker."
 
+# Selbe VERSION auch zur Laufzeit verfügbar machen (nicht nur als Image-
+# Label), damit der Server sie z.B. im Web-UI anzeigen kann.
+ENV APP_VERSION=${VERSION}
+
 EXPOSE 8080
 
 VOLUME ["/app/data"]

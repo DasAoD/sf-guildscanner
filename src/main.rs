@@ -1340,6 +1340,16 @@ async fn guild_details(
     }
 }
 
+/// GET /api/version – Laufende Version fürs Web-UI (Header). Kommt aus
+/// APP_VERSION (vom Docker-Build per --build-arg VERSION gesetzt, siehe
+/// Dockerfile), fällt lokal (`cargo run`, kein Docker) auf die
+/// Cargo.toml-Version + "-dev"-Suffix zurück.
+async fn get_version() -> impl IntoResponse {
+    let version = std::env::var("APP_VERSION")
+        .unwrap_or_else(|_| format!("{}-dev", env!("CARGO_PKG_VERSION")));
+    ok_response(version)
+}
+
 /// GET /api/status
 async fn status(State(handles): State<AppHandles>) -> impl IntoResponse {
     let app = handles.state.lock().await;
@@ -1993,6 +2003,7 @@ async fn main() {
         .route("/api/simulate/abort", post(abort_simulate))
         .route("/api/simulate/progress", get(get_sim_progress))
         .route("/api/refresh-own-fighters", post(refresh_own_fighters_endpoint))
+        .route("/api/version", get(get_version))
         .route("/api/status", get(status))
         .route("/api/logout", post(logout))
         .route("/api/export", get(export_data))
