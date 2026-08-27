@@ -295,6 +295,10 @@ const $=id=>document.getElementById(id);
 let results=[], ownGuild=null;
 let sortKey='rank', sortDir='asc';
 let hasScanData=false, scanDate='';
+// Namen der per Checkbox ausgewählten Gilden — bleibt über renderTable()-
+// Neuaufbauten hinweg bestehen (z.B. nach applyFilter() nach Simulationsende),
+// damit die Häkchen nicht bei jedem Neurendern verschwinden.
+let selectedGuilds=new Set();
 
 function setStep(n){for(let i=1;i<=4;i++){const e=$('s'+i);e.className='step';if(i<n)e.classList.add('done');if(i===n)e.classList.add('active');}}
 
@@ -507,9 +511,6 @@ async function applyFilter(){
 
 function renderTable(){
   const tb=$('rBody'); tb.innerHTML='';
-  // Reset select-all checkbox
-  $('selAll').checked=false;
-  updateSelInfo();
 
   // Update sort arrows
   document.querySelectorAll('th .arrow').forEach(a=>a.textContent='');
@@ -546,7 +547,7 @@ function renderTable(){
     }
 
     tr.innerHTML=`
-      <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" onchange="updateSelInfo()"></td>
+      <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" ${selectedGuilds.has(g.name)?'checked':''} onchange="toggleGuildSelection(this)"></td>
       <td><strong>${esc(g.name)}</strong></td>
       <td class="${memberCls}">${g.member_count}</td>
       <td class="${maxCls}">${g.max_level}</td>
@@ -559,6 +560,10 @@ function renderTable(){
       <td><button class="btn-s" style="padding:0.25rem 0.5rem;font-size:0.75rem" data-g="${esc(g.name)}" onclick="showDetail(this.dataset.g)">👁</button></td>`;
     tb.appendChild(tr);
   });
+
+  // Erst jetzt, mit den tatsächlich gerenderten (ggf. vorbelegten) Checkboxen,
+  // Zähler + Header-Checkbox-Zustand berechnen.
+  updateSelInfo();
 }
 
 function sortBy(key){
@@ -568,19 +573,38 @@ function sortBy(key){
 }
 
 // ── CHECKBOX SELECTION ─────────────────────────────────────
+// selectedGuilds ist die eigentliche Quelle der Wahrheit für die Auswahl
+// (übersteht renderTable()-Neuaufbauten, z.B. nach einer Simulation); die
+// Checkbox-Elemente selbst sind nur die aktuelle visuelle Darstellung davon.
+function toggleGuildSelection(cb){
+  if(cb.checked) selectedGuilds.add(cb.dataset.name);
+  else selectedGuilds.delete(cb.dataset.name);
+  updateSelInfo();
+}
+
 function toggleAll(cb){
-  document.querySelectorAll('.gsel').forEach(c=>c.checked=cb.checked);
+  document.querySelectorAll('.gsel').forEach(c=>{
+    c.checked=cb.checked;
+    if(cb.checked) selectedGuilds.add(c.dataset.name);
+    else selectedGuilds.delete(c.dataset.name);
+  });
   updateSelInfo();
 }
 
 function selectAllVisible(){
-  document.querySelectorAll('.gsel').forEach(c=>c.checked=true);
+  document.querySelectorAll('.gsel').forEach(c=>{
+    c.checked=true;
+    selectedGuilds.add(c.dataset.name);
+  });
   $('selAll').checked=true;
   updateSelInfo();
 }
 
 function deselectAll(){
-  document.querySelectorAll('.gsel').forEach(c=>c.checked=false);
+  document.querySelectorAll('.gsel').forEach(c=>{
+    c.checked=false;
+    selectedGuilds.delete(c.dataset.name);
+  });
   $('selAll').checked=false;
   updateSelInfo();
 }
