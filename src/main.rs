@@ -805,9 +805,20 @@ async fn run_scan(handles: AppHandles) -> Result<(), String> {
 
             // Keep only what we need:
             // - below us up to down_limit
-            // - above us up to 20 ranks
-            let in_rank_window = (hg.rank >= rank_up_start && hg.rank < own_rank)
-                || (hg.rank > own_rank && hg.rank <= rank_down_end);
+            // - above us up to 20 ranks (full_up_scan: bis Rang 1)
+            //
+            // Bug (gefunden 2026-09-21): Ist rank_up_start klein genug
+            // (eigener Rang nah an #1), deckt page_low bereits Seite 0 ab —
+            // dann läuft die separate "bis Rang 1"-Zusatzphase weiter unten
+            // gar nicht erst an (page_low > 0 ist dann false), obwohl Seite
+            // 0 selbst schon alle Gilden ab Rang 1 enthält. Ohne die
+            // full_up_scan-Ausnahme hier würden die trotzdem rausgefiltert.
+            let in_rank_window = if settings.full_up_scan {
+                hg.rank != own_rank && hg.rank <= rank_down_end
+            } else {
+                (hg.rank >= rank_up_start && hg.rank < own_rank)
+                    || (hg.rank > own_rank && hg.rank <= rank_down_end)
+            };
 
             if !in_rank_window {
                 continue;
