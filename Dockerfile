@@ -2,14 +2,21 @@
 FROM rust:latest AS builder
 
 WORKDIR /build
-COPY Cargo.toml Cargo.toml
-COPY src/ src/
 
 RUN rustup target add x86_64-unknown-linux-musl
 RUN apt-get update && apt-get install -y musl-tools && rm -rf /var/lib/apt/lists/*
 
-# Build static binary (no GLIBC dependency)
-RUN cargo build --release --target x86_64-unknown-linux-musl 2>&1
+# Abhängigkeiten in eigener Schicht mit Dummy-main bauen: Solange sich
+# Cargo.toml/Cargo.lock nicht ändern, kommt diese Schicht aus dem Cache und
+# bei Code-Änderungen wird nur noch der eigene Crate neu kompiliert.
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo 'fn main() {}' > src/main.rs     && cargo build --release --target x86_64-unknown-linux-musl
+
+COPY src/ src/
+
+# Build static binary (no GLIBC dependency). touch, damit cargo die echte
+# main.rs sicher als neuer als den Dummy-Build erkennt.
+RUN touch src/main.rs && cargo build --release --target x86_64-unknown-linux-musl 2>&1
 
 # ── Runtime Stage ─────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
