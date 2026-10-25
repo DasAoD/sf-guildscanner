@@ -11,7 +11,7 @@ let hasScanData=false, scanDate='';
 // damit die Häkchen nicht bei jedem Neurendern verschwinden.
 let selectedGuilds=new Set();
 
-const PAGES=['overview','scan','results','hof','help'];
+const PAGES=['overview','scan','results','hof','settings','help'];
 const MUSH_ICON='<svg class="icon mush"><use href="#i-mush"/></svg>';
 let lastMushrooms='0';
 
@@ -755,6 +755,35 @@ function esc(s){const d=document.createElement('div');d.textContent=s;return d.i
     sync();
   }
 })();
+
+// ── EINSTELLUNGEN & UPDATE-HINWEIS ─────────────────────────
+async function loadSettings(){
+  try{
+    const r=await api('settings');
+    if(r.success)$('setUpdate').value=r.data.update_check;
+  }catch(e){/* Einstellungen sind optional, Standard bleibt sichtbar */}
+}
+$('setUpdate').addEventListener('change',async()=>{
+  try{
+    const r=await api('settings',{update_check:$('setUpdate').value});
+    $('setUpdateMsg').textContent=r.success?'Gespeichert.':'Fehler: '+r.error;
+    checkUpdate();
+  }catch(e){$('setUpdateMsg').textContent='Fehler: '+e.message;}
+});
+async function checkUpdate(){
+  try{
+    const r=await api('update-check');
+    if(!r.success)return;
+    const u=r.data, el=$('updHint');
+    if(u.enabled&&u.newer){
+      el.textContent=`Update ${u.latest} verfügbar`; el.href=u.url; el.classList.remove('hidden');
+    }else el.classList.add('hidden');
+    $('updStatus').textContent=!u.enabled?'Die Prüfung ist aus.'
+      :u.latest?`Installiert: ${u.current||'unbekannt'} · Neueste: ${u.latest}`
+      :'Die neueste Version konnte noch nicht ermittelt werden.';
+  }catch(e){/* ohne Netz bleibt der Hinweis einfach aus */}
+}
+loadSettings(); checkUpdate(); setInterval(checkUpdate,30*60*1000);
 
 initColMenus();
 

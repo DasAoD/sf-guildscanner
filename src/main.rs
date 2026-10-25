@@ -272,6 +272,7 @@ type SharedProgress = Arc<Mutex<ProgressState>>;
 struct AppHandles {
     state: SharedState,
     progress: SharedProgress,
+    meta: SharedMeta,
 }
 
 // ── API Request/Response Types ───────────────────────────────────────────────
@@ -1405,14 +1406,234 @@ async fn guild_details(
     }
 }
 
-/// GET /api/version – Laufende Version fürs Web-UI (Header). Kommt aus
+/// Laufende Version fürs Web-UI (Header) und die Update-Prüfung. Kommt aus
 /// APP_VERSION (vom Docker-Build per --build-arg VERSION gesetzt, siehe
 /// Dockerfile), fällt lokal (`cargo run`, kein Docker) auf die
 /// Cargo.toml-Version + "-dev"-Suffix zurück.
+fn app_version() -> String {
+    std::env::var("APP_VERSION")
+        .unwrap_or_else(|_| format!("{}-dev", env!("CARGO_PKG_VERSION")))
+}
+
+/// GET /api/version
 async fn get_version() -> impl IntoResponse {
-    let version = std::env::var("APP_VERSION")
-        .unwrap_or_else(|_| format!("{}-dev", env!("CARGO_PKG_VERSION")));
-    ok_response(version)
+    ok_response(app_version())
+}
+
+// ── Settings & Update-Hinweis ────────────────────────────────────────────────
+
+/// Docker-Hub-Repository, dessen Tags für den Update-Hinweis abgefragt werden.
+const IMAGE_REPO: &str = "dasaod/sf-guildscanner";
+const SETTINGS_FILE: &str = "/app/data/settings.json";
+
+#[derive(Serialize, Deserialize, Clone)]
+struct AppSettings {
+    /// Wie oft auf eine neue Version geprüft wird: "off", "hourly", "daily"
+    /// oder "weekly"
+    update_check: String,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self { update_check: "daily".into() }
+    }
+}
+
+fn valid_update_check(v: &str) -> bool {
+    matches!(v, "off" | "hourly" | "daily" | "weekly")
+}
+
+fn update_interval(setting: &str) -> Option<chrono::Duration> {
+    match setting {
+        "hourly" => Some(chrono::Duration::hours(1)),
+        "daily" => Some(chrono::Duration::days(1)),
+        "weekly" => Some(chrono::Duration::weeks(1)),
+        _ => None,
+    }
+}
+
+fn load_settings() -> AppSettings {
+    std::fs::read_to_string(SETTINGS_FILE)
+        .ok()
+        .and_then(|s| serde_json::from_str::<AppSettings>(&s).ok())
+        .filter(|s| valid_update_check(&s.update_check))
+        .unwrap_or_default()
+}
+
+fn save_settings(settings: &AppSettings) -> Result<(), String> {
+    std::fs::create_dir_all(DATA_DIR).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    std::fs::write(SETTINGS_FILE, json).map_err(|e| e.to_string())
+}
+
+/// Einstellungen und das Ergebnis der letzten Update-Prüfung. Eigener Lock,
+/// damit sie nicht hinter Spielserver-Requests hängen (siehe `AppHandles`).
+struct MetaState {
+    settings: AppSettings,
+    latest: Option<String>,
+    checked_at: Option<chrono::DateTime<chrono::Local>>,
+}
+
+type SharedMeta = Arc<Mutex<MetaState>>;
+
+/// "0.5.24" oder "v0.5.24-dev" -> (0, 5, 24)
+fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
+    let core = s
+        .trim_start_matches('v')
+        .split(|c: char| !c.is_ascii_digit() && c != '.')
+        .next()?;
+    let mut parts = core.split('.');
+    Some((
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    ))
+}
+
+/// Höchste Versionsnummer (reine x.y.z-Tags) des Images auf Docker Hub.
+async fn fetch_latest_version() -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .user_agent("sf-guildscanner")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let url = format!(
+        "https://hub.docker.com/v2/repositories/{}/tags?page_size=100&ordering=last_updated",
+        IMAGE_REPO
+    );
+    let body: serde_json::Value = client
+        .get(url)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    body["results"]
+        .as_array()
+        .ok_or_else(|| "Unerwartete Antwort von Docker Hub".to_string())?
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .filter(|n| n.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        .filter_map(|n| parse_version(n).map(|v| (v, n.to_string())))
+        .max_by_key(|(v, _)| *v)
+        .map(|(_, n)| n)
+        .ok_or_else(|| "Keine Versions-Tags gefunden".to_string())
+}
+
+/// GET /api/settings
+async fn get_settings(State(handles): State<AppHandles>) -> impl IntoResponse {
+    let meta = handles.meta.lock().await;
+    ok_response(meta.settings.clone())
+}
+
+#[derive(Deserialize)]
+struct SettingsRequest {
+    update_check: String,
+}
+
+/// POST /api/settings
+async fn set_settings(
+    State(handles): State<AppHandles>,
+    Json(req): Json<SettingsRequest>,
+) -> impl IntoResponse {
+    if !valid_update_check(&req.update_check) {
+        return Err(err_response::<AppSettings>("Ungültiger Wert für update_check"));
+    }
+    let new = AppSettings { update_check: req.update_check };
+    // Erst speichern: scheitert das Schreiben, gilt die alte Einstellung weiter
+    save_settings(&new).map_err(|e| err_response::<AppSettings>(&e))?;
+    let mut meta = handles.meta.lock().await;
+    meta.settings = new;
+    // Bei geänderter Einstellung beim nächsten Abruf frisch prüfen
+    meta.checked_at = None;
+    Ok(ok_response(meta.settings.clone()))
+}
+
+#[derive(Serialize)]
+struct UpdateInfo {
+    enabled: bool,
+    current: String,
+    latest: Option<String>,
+    newer: bool,
+    url: String,
+}
+
+/// GET /api/update-check – fragt Docker Hub nur, wenn der letzte Abruf älter
+/// als das eingestellte Intervall ist.
+async fn update_check(State(handles): State<AppHandles>) -> impl IntoResponse {
+    let current = app_version();
+    let url = format!("https://hub.docker.com/r/{}/tags", IMAGE_REPO);
+
+    let (interval, stale) = {
+        let meta = handles.meta.lock().await;
+        let interval = update_interval(&meta.settings.update_check);
+        let stale = match (interval, meta.checked_at) {
+            (Some(iv), Some(t)) => chrono::Local::now().signed_duration_since(t) >= iv,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        (interval, stale)
+    };
+
+    let Some(interval) = interval else {
+        return ok_response(UpdateInfo { enabled: false, current, latest: None, newer: false, url });
+    };
+
+    if stale {
+        let result = fetch_latest_version().await;
+        let mut meta = handles.meta.lock().await;
+        let now = chrono::Local::now();
+        match result {
+            Ok(v) => {
+                meta.latest = Some(v);
+                meta.checked_at = Some(now);
+            }
+            Err(e) => {
+                log::warn!("Update-Prüfung fehlgeschlagen: {}", e);
+                // Nach einem Fehler in 10 Minuten erneut versuchen, nicht bei jedem Aufruf
+                meta.checked_at = Some(now - interval + chrono::Duration::minutes(10));
+            }
+        }
+    }
+
+    let latest = handles.meta.lock().await.latest.clone();
+    let newer = match (parse_version(&current), latest.as_deref().and_then(parse_version)) {
+        (Some(c), Some(l)) => l > c,
+        _ => false,
+    };
+    ok_response(UpdateInfo { enabled: true, current, latest, newer, url })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_versions() {
+        assert_eq!(parse_version("0.5.24"), Some((0, 5, 24)));
+        assert_eq!(parse_version("v0.6.1"), Some((0, 6, 1)));
+        assert_eq!(parse_version("0.5.24-redesign3"), Some((0, 5, 24)));
+        assert_eq!(parse_version("0.2.3-dev"), Some((0, 2, 3)));
+        assert_eq!(parse_version("latest"), None);
+        assert_eq!(parse_version("1.2"), None);
+    }
+
+    #[test]
+    fn compares_versions_numerically() {
+        assert!(parse_version("0.5.10") > parse_version("0.5.9"));
+        assert!(parse_version("0.6.0") > parse_version("0.5.99"));
+    }
+
+    #[test]
+    fn validates_update_check() {
+        assert!(valid_update_check("off"));
+        assert!(valid_update_check("weekly"));
+        assert!(!valid_update_check("monthly"));
+        assert!(update_interval("off").is_none());
+    }
 }
 
 /// GET /api/status
@@ -2122,7 +2343,12 @@ async fn main() {
         enemy_fighters_cache: HashMap::new(),
     }));
     let progress: SharedProgress = Arc::new(Mutex::new(ProgressState::default()));
-    let handles = AppHandles { state, progress };
+    let meta: SharedMeta = Arc::new(Mutex::new(MetaState {
+        settings: load_settings(),
+        latest: None,
+        checked_at: None,
+    }));
+    let handles = AppHandles { state, progress, meta };
 
     let app = Router::new()
         .route("/api/login", post(login))
@@ -2138,6 +2364,8 @@ async fn main() {
         .route("/api/simulate/progress", get(get_sim_progress))
         .route("/api/refresh-own-fighters", post(refresh_own_fighters_endpoint))
         .route("/api/version", get(get_version))
+        .route("/api/settings", get(get_settings).post(set_settings))
+        .route("/api/update-check", get(update_check))
         .route("/api/status", get(status))
         .route("/api/logout", post(logout))
         .route("/api/export", get(export_data))
