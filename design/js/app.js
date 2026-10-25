@@ -33,6 +33,53 @@
     box.addEventListener('change', () => box.closest('.char').classList.toggle('on', box.checked));
   });
 
+  function storeGet(key) {
+    try { return JSON.parse(localStorage.getItem(key)) || []; } catch (e) { return []; }
+  }
+  function storeSet(key, val) {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* ohne Speicher: nur für diese Sitzung */ }
+  }
+
+  document.querySelectorAll('.colmenu').forEach((box) => {
+    const table = document.getElementById(box.dataset.for);
+    const menu = box.querySelector('.menu');
+    const heads = Array.from(table.querySelectorAll('thead th'));
+    const key = 'cols:' + table.id;
+    const hidden = new Set(storeGet(key));
+
+    function apply() {
+      heads.forEach((th, i) => {
+        const off = hidden.has(th.dataset.col);
+        table.querySelectorAll('tr').forEach((tr) => tr.cells[i].classList.toggle('colhide', off));
+      });
+    }
+
+    heads.filter((th) => !('lock' in th.dataset)).forEach((th) => {
+      const label = document.createElement('label');
+      label.className = 'check';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !hidden.has(th.dataset.col);
+      cb.addEventListener('change', () => {
+        if (cb.checked) hidden.delete(th.dataset.col); else hidden.add(th.dataset.col);
+        storeSet(key, Array.from(hidden));
+        apply();
+      });
+      label.append(cb, th.textContent);
+      menu.append(label);
+    });
+
+    box.querySelector('button').addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.hidden = !menu.hidden;
+    });
+    menu.addEventListener('click', (e) => e.stopPropagation());
+    apply();
+  });
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.colmenu .menu').forEach((m) => { m.hidden = true; });
+  });
+
   window.addEventListener('hashchange', show);
   show();
 })();

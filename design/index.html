@@ -142,13 +142,14 @@
       <div class="card">
         <div class="simbar">
           <span class="grow">0 von 54 Gilden ausgewählt · Teilnehmer: 5 von 6 aktiven (<a href="#overview" style="color:var(--gold)">ändern</a>)</span>
+          <div class="colmenu" data-for="tbl-results"><button class="btn sec" type="button">Spalten</button><div class="menu" hidden></div></div>
           <label class="hint" for="pz">Pilze</label>
           <select id="pz" style="width:auto"><option>0</option><option>1</option><option>2</option><option>3</option></select>
           <button class="btn sec" type="button">Simulieren</button>
         </div>
         <div class="tablewrap">
-          <table>
-            <thead><tr><th><input type="checkbox" class="selall"></th><th>Gilde</th><th class="num">Mitgl.</th><th class="num">Max Lvl</th><th class="num">Min Lvl</th><th class="num">Ø Level</th><th class="num">Rang</th><th class="num">Ehre</th><th class="num">Sim</th><th>Status</th></tr></thead>
+          <table id="tbl-results">
+            <thead><tr><th data-col="sel" data-lock><input type="checkbox" class="selall"></th><th data-col="name" data-lock>Gilde</th><th class="num" data-col="members">Mitgl.</th><th class="num" data-col="maxlvl">Max Lvl</th><th class="num" data-col="minlvl">Min Lvl</th><th class="num" data-col="avg">Ø Level</th><th class="num" data-col="rank">Rang</th><th class="num" data-col="honor">Ehre</th><th class="num" data-col="sim">Sim</th><th data-col="status">Status</th></tr></thead>
             <tbody>
               <tr><td><input type="checkbox"></td><td class="name">HAUS am SEE</td><td class="num hi">47</td><td class="num hi">481</td><td class="num">130</td><td class="num hi">344,7</td><td class="num">#92</td><td class="num">7.029</td><td class="num">–</td><td><span class="tag bad">Angegriffen</span><span class="tag bad">Strikt</span></td></tr>
               <tr><td><input type="checkbox"></td><td class="name">Trinity Rising</td><td class="num hi">14</td><td class="num hi">519</td><td class="num">393</td><td class="num hi">474,5</td><td class="num">#98</td><td class="num">6.358</td><td class="num">–</td><td><span class="tag ok">Frei</span><span class="tag bad">Strikt</span></td></tr>
@@ -168,13 +169,14 @@
         <div class="simbar">
           <label class="check"><input type="checkbox"><span>Nur (noch) nicht angreifbare</span></label>
           <span class="grow">Teilnehmer: 5 von 6 aktiven (<a href="#overview" style="color:var(--gold)">ändern</a>)</span>
+          <div class="colmenu" data-for="tbl-hof"><button class="btn sec" type="button">Spalten</button><div class="menu" hidden></div></div>
           <label class="hint" for="pz2">Pilze</label>
           <select id="pz2" style="width:auto"><option>0</option><option>1</option><option>2</option><option>3</option></select>
           <button class="btn sec" type="button">Simulieren</button>
         </div>
         <div class="tablewrap">
-          <table>
-            <thead><tr><th><input type="checkbox" class="selall"></th><th class="num">Rang</th><th>Gilde</th><th class="num">Mitgl.</th><th class="num">Ehre</th><th>Angreifbar</th><th class="num">Sim</th></tr></thead>
+          <table id="tbl-hof">
+            <thead><tr><th data-col="sel" data-lock><input type="checkbox" class="selall"></th><th class="num" data-col="rank">Rang</th><th data-col="name" data-lock>Gilde</th><th class="num" data-col="members">Mitgl.</th><th class="num" data-col="honor">Ehre</th><th data-col="attackable">Angreifbar</th><th class="num" data-col="sim">Sim</th></tr></thead>
             <tbody>
               <tr><td><input type="checkbox"></td><td class="num">#100</td><td class="name">Ciamar</td><td class="num">25</td><td class="num">6.131</td><td><span class="tag ok">Ja</span></td><td class="num">–</td></tr>
               <tr><td><input type="checkbox"></td><td class="num">#101</td><td class="name">GROTA - HERA</td><td class="num">49</td><td class="num">6.096</td><td><span class="tag ok">Ja</span></td><td class="num">–</td></tr>
