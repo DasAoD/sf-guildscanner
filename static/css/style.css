@@ -232,3 +232,12 @@ th .arrow { font-size: 0.7rem; opacity: 0.7; }
 .partInfo a { color: var(--gold); }
 
 .rowbtns { display: inline-flex; gap: 0.3rem; }
+
+.charcard { display: flex; flex-direction: column; gap: 0.15rem; text-align: left; min-width: 230px; padding: 0.6rem 0.85rem; background: #07151e; border: 1px solid var(--line-soft); border-radius: 4px; color: var(--txt); cursor: pointer; font: inherit; }
+.charcard b { font-size: 1rem; }
+.charcard small { color: var(--muted); }
+.charcard:hover, .charcard.on { border-color: var(--gold); }
+.charcard:disabled { opacity: 0.5; cursor: default; }
+#manualBox summary { cursor: pointer; }
+#manualBox[open] summary { margin-bottom: 0.7rem; }
+code { background: #07151e; border: 1px solid var(--line-soft); border-radius: 3px; padding: 0 0.3rem; }

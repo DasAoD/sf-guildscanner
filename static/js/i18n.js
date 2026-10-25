@@ -18,6 +18,8 @@ window.I18N = {
     'page.settings': 'Einstellungen',
     'page.character': 'Charakter',
     'page.help': 'Hilfe',
+    'nav.accounts': 'Konten',
+    'page.accounts': 'Konten',
     'nav.users': 'Benutzer',
     'page.users': 'Benutzer',
     'auth.name': 'Benutzername',

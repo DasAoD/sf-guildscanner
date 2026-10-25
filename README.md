@@ -70,6 +70,14 @@ Der Scanner hat eigene Benutzer. Beim ersten Aufruf legst du den ersten Benutzer
 - Das Sitzungs-Cookie ist `Secure`: Der Scanner ist für den Betrieb **hinter einem HTTPS-Reverse-Proxy** gedacht. Den Port nicht zusätzlich ohne Proxy ins Netz öffnen. Für lokale Tests über http geht `SFGS_COOKIE_SECURE=false`.
 - Scans aus Versionen vor 1.0.0 (direkt in `data/`) werden nicht mehr gelesen und können gelöscht werden.
 
+### S&F-Konten speichern
+
+Unter *Konten* hinterlegst du pro Benutzer einen oder mehrere S&F-Zugänge (SSO) und legst per Haken fest, mit welchen Charakteren du arbeitest. Unter *Charakter wechseln* erscheinen nur diese, jeweils mit Server, Gilde und Konto. Beim Wählen meldet sich der Scanner mit den gespeicherten Daten selbst beim Spiel an; ohne gespeicherte Konten bleibt die einmalige Anmeldung ohne Speichern.
+
+- Die Passwörter liegen nur **verschlüsselt** (AES-256-GCM, gebunden an Benutzer und Konto) in `data/users/<id>/accounts.json`, werden nie wieder angezeigt und tauchen in keiner Antwort oder im Log auf.
+- Der Schlüssel kommt aus der Umgebungsvariable **`SFGS_KEY`** (mindestens 32 zufällige Zeichen, z.B. `openssl rand -base64 32`). Ohne Schlüssel ist das Speichern gesperrt. **Den Schlüssel sichern und nicht ändern:** Mit einem anderen Schlüssel lassen sich gespeicherte Passwörter nicht mehr entschlüsseln, die Konten müssen dann neu hinterlegt werden.
+- Wer Zugriff auf Schlüssel *und* Datenordner hat, kommt an die Passwörter. Den Schlüssel deshalb nicht im selben Backup wie `data/` ablegen.
+
 ### Aus dem Quellcode bauen
 
 ```bash
@@ -115,7 +123,7 @@ sfguild-scanner/
 
 ## Hinweise
 
-- Die S&F-Zugangsdaten werden **nur im RAM** gehalten, nie gespeichert (Benutzerkonten des Scanners siehe oben)
+- S&F-Passwörter werden nur verschlüsselt gespeichert (siehe *S&F-Konten speichern*); bei der einmaligen Anmeldung ohne Speichern bleiben sie nur im RAM
 - Der Container braucht Zugang zu `sfgame.net` und `sso.playa-games.com`
 - Erster Build dauert 3-5 Min. (Rust kompiliert alle Dependencies)
 - Zwischen API-Requests wird 400-500ms Pause gehalten (Rate-Limiting)
