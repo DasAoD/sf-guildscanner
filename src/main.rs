@@ -5,13 +5,13 @@ use std::time::Duration;
 use axum::{
     Json, Router,
     extract::State,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use tower_http::services::ServeDir;
+use tower_http::{services::ServeDir, set_header::SetResponseHeader};
 
 use sf_api::{
     command::Command,
@@ -199,7 +199,9 @@ struct OwnFightersCache {
     /// Vergleichsbasis, um Roster-Änderungen (Zu-/Abgänge, Aktiv-Wechsel)
     /// sofort zu erkennen, unabhängig vom Zeitfenster.
     active_names: Vec<String>,
-    fighters: Vec<Fighter>,
+    /// Kampfwerte je Mitgliedsname, damit einzelne Mitglieder später per
+    /// Teilnahme-Auswahl herausgefiltert werden können.
+    fighters: Vec<(String, Fighter)>,
 }
 
 /// Wie lange ein Cache der eigenen Kampfwerte ohne Roster-Änderung gültig
@@ -270,6 +272,7 @@ type SharedProgress = Arc<Mutex<ProgressState>>;
 struct AppHandles {
     state: SharedState,
     progress: SharedProgress,
+    meta: SharedMeta,
 }
 
 // ── API Request/Response Types ───────────────────────────────────────────────
@@ -327,6 +330,13 @@ struct SimulateRequest {
     /// geclampt)
     #[serde(default)]
     iterations: Option<u32>,
+    /// Kampfbereite eigene Mitglieder, die nicht antreten sollen
+    #[serde(default)]
+    exclude_members: Vec<String>,
+    /// Eigene Mitglieder, die zusätzlich antreten sollen, obwohl sie nicht
+    /// kampfbereit sind (Planung)
+    #[serde(default)]
+    include_members: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -1396,14 +1406,234 @@ async fn guild_details(
     }
 }
 
-/// GET /api/version – Laufende Version fürs Web-UI (Header). Kommt aus
+/// Laufende Version fürs Web-UI (Header) und die Update-Prüfung. Kommt aus
 /// APP_VERSION (vom Docker-Build per --build-arg VERSION gesetzt, siehe
 /// Dockerfile), fällt lokal (`cargo run`, kein Docker) auf die
 /// Cargo.toml-Version + "-dev"-Suffix zurück.
+fn app_version() -> String {
+    std::env::var("APP_VERSION")
+        .unwrap_or_else(|_| format!("{}-dev", env!("CARGO_PKG_VERSION")))
+}
+
+/// GET /api/version
 async fn get_version() -> impl IntoResponse {
-    let version = std::env::var("APP_VERSION")
-        .unwrap_or_else(|_| format!("{}-dev", env!("CARGO_PKG_VERSION")));
-    ok_response(version)
+    ok_response(app_version())
+}
+
+// ── Settings & Update-Hinweis ────────────────────────────────────────────────
+
+/// Docker-Hub-Repository, dessen Tags für den Update-Hinweis abgefragt werden.
+const IMAGE_REPO: &str = "dasaod/sf-guildscanner";
+const SETTINGS_FILE: &str = "/app/data/settings.json";
+
+#[derive(Serialize, Deserialize, Clone)]
+struct AppSettings {
+    /// Wie oft auf eine neue Version geprüft wird: "off", "hourly", "daily"
+    /// oder "weekly"
+    update_check: String,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self { update_check: "daily".into() }
+    }
+}
+
+fn valid_update_check(v: &str) -> bool {
+    matches!(v, "off" | "hourly" | "daily" | "weekly")
+}
+
+fn update_interval(setting: &str) -> Option<chrono::Duration> {
+    match setting {
+        "hourly" => Some(chrono::Duration::hours(1)),
+        "daily" => Some(chrono::Duration::days(1)),
+        "weekly" => Some(chrono::Duration::weeks(1)),
+        _ => None,
+    }
+}
+
+fn load_settings() -> AppSettings {
+    std::fs::read_to_string(SETTINGS_FILE)
+        .ok()
+        .and_then(|s| serde_json::from_str::<AppSettings>(&s).ok())
+        .filter(|s| valid_update_check(&s.update_check))
+        .unwrap_or_default()
+}
+
+fn save_settings(settings: &AppSettings) -> Result<(), String> {
+    std::fs::create_dir_all(DATA_DIR).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    std::fs::write(SETTINGS_FILE, json).map_err(|e| e.to_string())
+}
+
+/// Einstellungen und das Ergebnis der letzten Update-Prüfung. Eigener Lock,
+/// damit sie nicht hinter Spielserver-Requests hängen (siehe `AppHandles`).
+struct MetaState {
+    settings: AppSettings,
+    latest: Option<String>,
+    checked_at: Option<chrono::DateTime<chrono::Local>>,
+}
+
+type SharedMeta = Arc<Mutex<MetaState>>;
+
+/// "0.5.24" oder "v0.5.24-dev" -> (0, 5, 24)
+fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
+    let core = s
+        .trim_start_matches('v')
+        .split(|c: char| !c.is_ascii_digit() && c != '.')
+        .next()?;
+    let mut parts = core.split('.');
+    Some((
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    ))
+}
+
+/// Höchste Versionsnummer (reine x.y.z-Tags) des Images auf Docker Hub.
+async fn fetch_latest_version() -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .user_agent("sf-guildscanner")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let url = format!(
+        "https://hub.docker.com/v2/repositories/{}/tags?page_size=100&ordering=last_updated",
+        IMAGE_REPO
+    );
+    let body: serde_json::Value = client
+        .get(url)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    body["results"]
+        .as_array()
+        .ok_or_else(|| "Unerwartete Antwort von Docker Hub".to_string())?
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .filter(|n| n.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        .filter_map(|n| parse_version(n).map(|v| (v, n.to_string())))
+        .max_by_key(|(v, _)| *v)
+        .map(|(_, n)| n)
+        .ok_or_else(|| "Keine Versions-Tags gefunden".to_string())
+}
+
+/// GET /api/settings
+async fn get_settings(State(handles): State<AppHandles>) -> impl IntoResponse {
+    let meta = handles.meta.lock().await;
+    ok_response(meta.settings.clone())
+}
+
+#[derive(Deserialize)]
+struct SettingsRequest {
+    update_check: String,
+}
+
+/// POST /api/settings
+async fn set_settings(
+    State(handles): State<AppHandles>,
+    Json(req): Json<SettingsRequest>,
+) -> impl IntoResponse {
+    if !valid_update_check(&req.update_check) {
+        return Err(err_response::<AppSettings>("Ungültiger Wert für update_check"));
+    }
+    let new = AppSettings { update_check: req.update_check };
+    // Erst speichern: scheitert das Schreiben, gilt die alte Einstellung weiter
+    save_settings(&new).map_err(|e| err_response::<AppSettings>(&e))?;
+    let mut meta = handles.meta.lock().await;
+    meta.settings = new;
+    // Bei geänderter Einstellung beim nächsten Abruf frisch prüfen
+    meta.checked_at = None;
+    Ok(ok_response(meta.settings.clone()))
+}
+
+#[derive(Serialize)]
+struct UpdateInfo {
+    enabled: bool,
+    current: String,
+    latest: Option<String>,
+    newer: bool,
+    url: String,
+}
+
+/// GET /api/update-check – fragt Docker Hub nur, wenn der letzte Abruf älter
+/// als das eingestellte Intervall ist.
+async fn update_check(State(handles): State<AppHandles>) -> impl IntoResponse {
+    let current = app_version();
+    let url = format!("https://hub.docker.com/r/{}/tags", IMAGE_REPO);
+
+    let (interval, stale) = {
+        let meta = handles.meta.lock().await;
+        let interval = update_interval(&meta.settings.update_check);
+        let stale = match (interval, meta.checked_at) {
+            (Some(iv), Some(t)) => chrono::Local::now().signed_duration_since(t) >= iv,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        (interval, stale)
+    };
+
+    let Some(interval) = interval else {
+        return ok_response(UpdateInfo { enabled: false, current, latest: None, newer: false, url });
+    };
+
+    if stale {
+        let result = fetch_latest_version().await;
+        let mut meta = handles.meta.lock().await;
+        let now = chrono::Local::now();
+        match result {
+            Ok(v) => {
+                meta.latest = Some(v);
+                meta.checked_at = Some(now);
+            }
+            Err(e) => {
+                log::warn!("Update-Prüfung fehlgeschlagen: {}", e);
+                // Nach einem Fehler in 10 Minuten erneut versuchen, nicht bei jedem Aufruf
+                meta.checked_at = Some(now - interval + chrono::Duration::minutes(10));
+            }
+        }
+    }
+
+    let latest = handles.meta.lock().await.latest.clone();
+    let newer = match (parse_version(&current), latest.as_deref().and_then(parse_version)) {
+        (Some(c), Some(l)) => l > c,
+        _ => false,
+    };
+    ok_response(UpdateInfo { enabled: true, current, latest, newer, url })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_versions() {
+        assert_eq!(parse_version("0.5.24"), Some((0, 5, 24)));
+        assert_eq!(parse_version("v0.6.1"), Some((0, 6, 1)));
+        assert_eq!(parse_version("0.5.24-redesign3"), Some((0, 5, 24)));
+        assert_eq!(parse_version("0.2.3-dev"), Some((0, 2, 3)));
+        assert_eq!(parse_version("latest"), None);
+        assert_eq!(parse_version("1.2"), None);
+    }
+
+    #[test]
+    fn compares_versions_numerically() {
+        assert!(parse_version("0.5.10") > parse_version("0.5.9"));
+        assert!(parse_version("0.6.0") > parse_version("0.5.99"));
+    }
+
+    #[test]
+    fn validates_update_check() {
+        assert!(valid_update_check("off"));
+        assert!(valid_update_check("weekly"));
+        assert!(!valid_update_check("monthly"));
+        assert!(update_interval("off").is_none());
+    }
 }
 
 /// GET /api/status
@@ -1418,6 +1648,7 @@ async fn status(State(handles): State<AppHandles>) -> impl IntoResponse {
         guild_name: Option<String>,
         has_scan_data: bool,
         scan_date: Option<String>,
+        own_guild: Option<OwnGuild>,
     }
 
     ok_response(StatusInfo {
@@ -1427,6 +1658,7 @@ async fn status(State(handles): State<AppHandles>) -> impl IntoResponse {
         guild_name: app.own_guild.as_ref().map(|g| g.name.clone()),
         has_scan_data: app.scan_data.is_some(),
         scan_date: app.scan_data.as_ref().map(|s| s.scanned_at.clone()),
+        own_guild: app.own_guild.clone(),
     })
 }
 
@@ -1508,83 +1740,126 @@ fn apply_mushrooms(base: &[Fighter], mushrooms: u8) -> Vec<Fighter> {
     right
 }
 
-/// Holt die Kampfwerte der eigenen aktiven Mitglieder — aus dem Cache, wenn
-/// er noch zum aktuellen Aktiv-Roster passt und nicht älter als
-/// `OWN_FIGHTERS_TTL_HOURS` ist, sonst frisch per ViewPlayer (+ wir selbst
-/// kostenlos aus dem GameState). Aktualisiert den Cache nach einem Refresh.
-async fn get_own_fighters(state: &SharedState) -> Result<Vec<Fighter>, String> {
-    let (idx, own_name, guild_name, mut active_names) = {
-        let app = state.lock().await;
-        let idx = app.selected.ok_or_else(|| "Kein Charakter ausgewählt".to_string())?;
-        let own_name = app.sessions[idx].username().to_string();
-        let og = app.own_guild.as_ref().ok_or_else(|| "Keine Gilde geladen".to_string())?;
-        let names: Vec<String> = og.active_members.iter().map(|m| m.name.clone()).collect();
-        (idx, own_name, og.name.clone(), names)
-    };
-    active_names.sort();
-
-    {
-        let app = state.lock().await;
-        if let Some(cache) = &app.own_fighters_cache {
-            let fresh_enough = chrono::Local::now().signed_duration_since(cache.fetched_at)
-                < chrono::Duration::hours(OWN_FIGHTERS_TTL_HOURS);
-            if fresh_enough && cache.guild_name == guild_name && cache.active_names == active_names {
-                log::info!("Own-fighters cache hit ({} Kämpfer, vom {})", cache.fighters.len(), cache.fetched_at);
-                return Ok(cache.fighters.clone());
-            }
-        }
-    }
-
-    log::info!("Own-fighters cache miss/stale, hole {} aktive Mitglieder frisch", active_names.len());
-
-    // Wir selbst: frisches Update, kostenlos aus dem GameState (kein ViewPlayer
-    // nötig). Nur wenn wir selbst kampfbereit sind, sonst kämpfen wir nicht mit.
-    let mut fighters: Vec<Fighter> = Vec::new();
-    if active_names.contains(&own_name) {
-        let mut app = state.lock().await;
-        let session = &mut app.sessions[idx];
+/// Holt die Kampfwerte eines eigenen Mitglieds: wir selbst kostenlos per
+/// Update aus dem GameState, alle anderen per ViewPlayer.
+async fn fetch_member_fighter(
+    state: &SharedState,
+    idx: usize,
+    own_name: &str,
+    name: &str,
+) -> Result<Option<Fighter>, String> {
+    let mut app = state.lock().await;
+    let session = &mut app.sessions[idx];
+    if name == own_name {
         let gs = session
             .send_command(Command::Update)
             .await
             .map_err(|e| format!("Update fehlgeschlagen: {:?}", e))?;
         let squad = PlayerFighterSquad::new(gs);
-        fighters.push(Fighter::from(&squad.character));
+        return Ok(Some(Fighter::from(&squad.character)));
     }
-
-    // Alle anderen aktiven Mitglieder per ViewPlayer.
-    let mut calls_made = 0u32;
-    for name in active_names.iter().filter(|n| n.as_str() != own_name) {
-        if calls_made > 0 {
-            tokio::time::sleep(Duration::from_millis(SIM_VIEWPLAYER_DELAY_MS)).await;
+    match session.send_command(Command::ViewPlayer { ident: name.to_string() }).await {
+        Ok(gs) => Ok(gs
+            .lookup
+            .lookup_name(name)
+            .map(|p| Fighter::from(&UpgradeableFighter::from_other(p)))),
+        Err(e) => {
+            log::warn!("ViewPlayer für eigenes Mitglied '{}' fehlgeschlagen: {:?}", name, e);
+            Ok(None)
         }
-        calls_made += 1;
+    }
+}
 
-        let uf = {
-            let mut app = state.lock().await;
-            let session = &mut app.sessions[idx];
-            match session.send_command(Command::ViewPlayer { ident: name.clone() }).await {
-                Ok(gs) => gs.lookup.lookup_name(name).map(UpgradeableFighter::from_other),
-                Err(e) => {
-                    log::warn!("ViewPlayer für eigenes Mitglied '{}' fehlgeschlagen: {:?}", name, e);
-                    None
+/// Holt die Kampfwerte der eigenen kampfbereiten Mitglieder — aus dem Cache,
+/// wenn er noch zum aktuellen Roster passt und nicht älter als
+/// `OWN_FIGHTERS_TTL_HOURS` ist, sonst frisch. Aktualisiert den Cache nach
+/// einem Refresh. `exclude` nimmt Mitglieder aus der Aufstellung, `include`
+/// schaltet zusätzlich Mitglieder zu, die nicht kampfbereit sind (z.B. noch
+/// nicht für den Angriff angemeldet; Planung). Namen, die nicht zur eigenen
+/// Gilde gehören, werden ignoriert.
+async fn get_own_fighters(
+    state: &SharedState,
+    include: &[String],
+    exclude: &[String],
+) -> Result<Vec<Fighter>, String> {
+    let (idx, own_name, guild_name, mut active_names, member_names) = {
+        let app = state.lock().await;
+        let idx = app.selected.ok_or_else(|| "Kein Charakter ausgewählt".to_string())?;
+        let own_name = app.sessions[idx].username().to_string();
+        let og = app.own_guild.as_ref().ok_or_else(|| "Keine Gilde geladen".to_string())?;
+        let names: Vec<String> = og.active_members.iter().map(|m| m.name.clone()).collect();
+        let members: Vec<String> = og.members.iter().map(|m| m.name.clone()).collect();
+        (idx, own_name, og.name.clone(), names, members)
+    };
+    active_names.sort();
+
+    let cached = {
+        let app = state.lock().await;
+        app.own_fighters_cache.as_ref().and_then(|cache| {
+            let fresh_enough = chrono::Local::now().signed_duration_since(cache.fetched_at)
+                < chrono::Duration::hours(OWN_FIGHTERS_TTL_HOURS);
+            if fresh_enough && cache.guild_name == guild_name && cache.active_names == active_names {
+                log::info!("Own-fighters cache hit ({} Kämpfer, vom {})", cache.fighters.len(), cache.fetched_at);
+                Some(cache.fighters.clone())
+            } else {
+                None
+            }
+        })
+    };
+
+    let missed = cached.is_none();
+    let ready: Vec<(String, Fighter)> = match cached {
+        Some(hit) => hit,
+        None => {
+            log::info!("Own-fighters cache miss/stale, hole {} aktive Mitglieder frisch", active_names.len());
+            let mut fresh: Vec<(String, Fighter)> = Vec::new();
+
+            // Wir selbst nur, wenn wir selbst kampfbereit sind.
+            if active_names.contains(&own_name) {
+                if let Some(f) = fetch_member_fighter(state, idx, &own_name, &own_name).await? {
+                    fresh.push((own_name.clone(), f));
                 }
             }
-        };
 
-        match uf {
-            Some(uf) => fighters.push(Fighter::from(&uf)),
-            None => log::warn!("Kein ViewPlayer-Ergebnis für eigenes Mitglied '{}'", name),
+            for (i, name) in active_names.iter().filter(|n| n.as_str() != own_name).enumerate() {
+                if i > 0 {
+                    tokio::time::sleep(Duration::from_millis(SIM_VIEWPLAYER_DELAY_MS)).await;
+                }
+                match fetch_member_fighter(state, idx, &own_name, name).await? {
+                    Some(f) => fresh.push((name.clone(), f)),
+                    None => log::warn!("Kein ViewPlayer-Ergebnis für eigenes Mitglied '{}'", name),
+                }
+            }
+
+            let mut app = state.lock().await;
+            app.own_fighters_cache = Some(OwnFightersCache {
+                fetched_at: chrono::Local::now(),
+                guild_name,
+                active_names: active_names.clone(),
+                fighters: fresh.clone(),
+            });
+            fresh
         }
-    }
+    };
 
+    let mut fighters: Vec<Fighter> = ready
+        .into_iter()
+        .filter(|(name, _)| !exclude.contains(name))
+        .map(|(_, f)| f)
+        .collect();
+
+    for (i, name) in include
+        .iter()
+        .filter(|n| member_names.contains(n) && !active_names.contains(n))
+        .enumerate()
     {
-        let mut app = state.lock().await;
-        app.own_fighters_cache = Some(OwnFightersCache {
-            fetched_at: chrono::Local::now(),
-            guild_name,
-            active_names,
-            fighters: fighters.clone(),
-        });
+        if i > 0 || missed {
+            tokio::time::sleep(Duration::from_millis(SIM_VIEWPLAYER_DELAY_MS)).await;
+        }
+        match fetch_member_fighter(state, idx, &own_name, name).await? {
+            Some(f) => fighters.push(f),
+            None => log::warn!("Kein Ergebnis für zugeschaltetes Mitglied '{}'", name),
+        }
     }
 
     Ok(fighters)
@@ -1836,17 +2111,26 @@ async fn start_simulate(
     let mushrooms = req.mushrooms.min(3);
     let iterations = req.iterations.unwrap_or(2500).clamp(100, 20_000);
     let guild_names = req.guild_names.clone();
+    let include = req.include_members.clone();
+    let exclude = req.exclude_members.clone();
 
     let handles_clone = handles.clone();
     tokio::spawn(async move {
-        run_simulate(handles_clone, guild_names, mushrooms, iterations).await;
+        run_simulate(handles_clone, guild_names, mushrooms, iterations, include, exclude).await;
     });
 
     Ok(ok_response("Simulation gestartet".to_string()))
 }
 
 /// The actual simulation logic, running as a background task
-async fn run_simulate(handles: AppHandles, guild_names: Vec<String>, mushrooms: u8, iterations: u32) {
+async fn run_simulate(
+    handles: AppHandles,
+    guild_names: Vec<String>,
+    mushrooms: u8,
+    iterations: u32,
+    include: Vec<String>,
+    exclude: Vec<String>,
+) {
     {
         let mut p = handles.progress.lock().await;
         p.sim = SimProgress {
@@ -1858,7 +2142,7 @@ async fn run_simulate(handles: AppHandles, guild_names: Vec<String>, mushrooms: 
         };
     }
 
-    let own_fighters = match get_own_fighters(&handles.state).await {
+    let own_fighters = match get_own_fighters(&handles.state, &include, &exclude).await {
         Ok(f) => f,
         Err(e) => {
             let mut p = handles.progress.lock().await;
@@ -1872,6 +2156,18 @@ async fn run_simulate(handles: AppHandles, guild_names: Vec<String>, mushrooms: 
             return;
         }
     };
+
+    if own_fighters.is_empty() {
+        let mut p = handles.progress.lock().await;
+        p.sim = SimProgress {
+            running: false,
+            phase: "error".into(),
+            current: 0,
+            total: 0,
+            message: "Keine Teilnehmer: Es tritt kein eigenes Mitglied an (Teilnahme-Auswahl auf der Übersicht prüfen)".into(),
+        };
+        return;
+    }
 
     {
         let mut p = handles.progress.lock().await;
@@ -1963,7 +2259,7 @@ async fn refresh_own_fighters_endpoint(State(handles): State<AppHandles>) -> imp
         let mut app = handles.state.lock().await;
         app.own_fighters_cache = None;
     }
-    match get_own_fighters(&handles.state).await {
+    match get_own_fighters(&handles.state, &[], &[]).await {
         Ok(fighters) => Ok(ok_response(format!(
             "{} eigene Kampfwerte aktualisiert",
             fighters.len()
@@ -2047,7 +2343,12 @@ async fn main() {
         enemy_fighters_cache: HashMap::new(),
     }));
     let progress: SharedProgress = Arc::new(Mutex::new(ProgressState::default()));
-    let handles = AppHandles { state, progress };
+    let meta: SharedMeta = Arc::new(Mutex::new(MetaState {
+        settings: load_settings(),
+        latest: None,
+        checked_at: None,
+    }));
+    let handles = AppHandles { state, progress, meta };
 
     let app = Router::new()
         .route("/api/login", post(login))
@@ -2063,12 +2364,19 @@ async fn main() {
         .route("/api/simulate/progress", get(get_sim_progress))
         .route("/api/refresh-own-fighters", post(refresh_own_fighters_endpoint))
         .route("/api/version", get(get_version))
+        .route("/api/settings", get(get_settings).post(set_settings))
+        .route("/api/update-check", get(update_check))
         .route("/api/status", get(status))
         .route("/api/logout", post(logout))
         .route("/api/export", get(export_data))
-        .fallback_service(
+        // no-cache: Browser fragen bei jedem Aufruf nach (ETag/Last-Modified),
+        // damit nach einem Update nie alte und neue Frontend-Dateien gemischt
+        // im Cache liegen.
+        .fallback_service(SetResponseHeader::overriding(
             ServeDir::new("/app/static").append_index_html_on_directories(true),
-        )
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache"),
+        ))
         .with_state(handles);
 
     let addr = "0.0.0.0:8080";

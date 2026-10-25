@@ -2,331 +2,266 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>⚔️ SF Gilden-Scanner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SF Gilden-Scanner</title>
 <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --bg: #1a1412; --bg2: #2a2118; --bg3: #352a1f;
-    --border: #5a4a35; --gold: #d4a743; --gold-l: #f0d078; --gold-d: #9a7a2a;
-    --red: #c44040; --green: #4a9a4a; --blue: #4a7ab0;
-    --txt: #e8dcc8; --dim: #9a8a70; --bright: #fff5e0;
-    --ff: 'MedievalSharp', cursive; --fb: 'Source Sans 3', sans-serif;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: var(--fb); background: var(--bg); color: var(--txt); min-height: 100vh;
-    background-image: radial-gradient(ellipse at 20% 0%, rgba(212,167,67,0.05) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 100%, rgba(100,60,20,0.06) 0%, transparent 50%); }
-
-  header {
-    text-align:center; padding:1.2rem 1rem 0.9rem;
-    border-bottom:2px solid var(--border);
-    background: var(--bg);
-    position: sticky; top: 0; z-index: 50;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.5);
-  }
-  header .header-inner {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  header .header-title h1 { font-family:var(--ff); font-size:2.2rem; color:var(--gold);
-    text-shadow:0 2px 8px rgba(212,167,67,0.25); }
-  header .header-title p { color:var(--dim); font-size:0.9rem; margin-top:0.2rem; }
-  header .header-logout {
-    position: absolute;
-    right: 0;
-    top: 50%;
-    transform: translateY(-50%);
-  }
-
-  .c { max-width:1200px; margin:0 auto; padding:1.2rem; }
-  .card { background:var(--bg2); border:1px solid var(--border); border-radius:8px;
-    padding:1.3rem; margin-bottom:1.1rem; }
-  .card h2 { font-family:var(--ff); color:var(--gold); font-size:1.25rem; margin-bottom:0.8rem;
-    display:flex; align-items:center; gap:0.4rem; }
-
-  .form-row { display:flex; gap:0.6rem; align-items:end; flex-wrap:wrap; }
-  .fg { display:flex; flex-direction:column; gap:0.25rem; flex:1; min-width:120px; }
-  label { font-size:0.75rem; color:var(--dim); text-transform:uppercase; letter-spacing:0.07em; }
-  input,select { background:var(--bg); border:1px solid var(--border); border-radius:4px;
-    padding:0.5rem 0.7rem; color:var(--txt); font-family:var(--fb); font-size:0.9rem; }
-  input:focus,select:focus { outline:none; border-color:var(--gold); }
-  input[type=number] { width:100px; }
-  input[type=checkbox] { width:auto; accent-color:var(--gold); }
-
-  button { font-family:var(--fb); font-weight:700; font-size:0.85rem; padding:0.5rem 1.2rem;
-    border-radius:4px; border:1px solid var(--gold-d); cursor:pointer; white-space:nowrap;
-    background:linear-gradient(180deg,var(--gold),var(--gold-d)); color:var(--bg); transition:all 0.12s; }
-  button:hover { filter:brightness(1.1); transform:translateY(-1px); }
-  button:disabled { opacity:0.35; cursor:not-allowed; transform:none; filter:none; }
-  .btn-s { background:var(--bg); color:var(--txt); border-color:var(--border); }
-  .btn-s:hover { border-color:var(--gold-d); }
-  .btn-d { background:linear-gradient(180deg,var(--red),#8a2020); border-color:var(--red); color:#fff; }
-  .btn-txt { background:linear-gradient(180deg,#3a6ea8,#2a4e78); border-color:#4a7ab0; color:#fff; }
-
-  table { width:100%; border-collapse:collapse; font-size:0.85rem; }
-  th { background:rgba(90,74,53,0.2); color:var(--gold-l); font-weight:600; text-align:left;
-    padding:0.5rem 0.6rem; border-bottom:2px solid var(--border); cursor:pointer; user-select:none; white-space:nowrap; }
-  th:hover { color:var(--bright); }
-  th.no-sort { cursor:default; }
-  th.no-sort:hover { color:var(--gold-l); }
-  th .arrow { font-size:0.7rem; opacity:0.5; }
-  td { padding:0.45rem 0.6rem; border-bottom:1px solid rgba(90,74,53,0.15); white-space:nowrap; }
-  tr:hover td { background:rgba(212,167,67,0.03); }
-  .tbl-wrap { overflow-x:auto; }
-
-  .pos { color:#6cc06c; } .neg { color:#e06060; } .neu { color:var(--dim); }
-  .badge { display:inline-block; padding:0.1rem 0.4rem; border-radius:3px; font-size:0.75rem; font-weight:600; }
-  .b-grn { background:rgba(74,154,74,0.15); color:#6cc06c; border:1px solid rgba(74,154,74,0.25); }
-  .b-red { background:rgba(196,64,64,0.15); color:#e06060; border:1px solid rgba(196,64,64,0.25); }
-  .b-gld { background:rgba(212,167,67,0.12); color:var(--gold); border:1px solid rgba(212,167,67,0.2); }
-
-  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:0.6rem; margin-bottom:0.8rem; }
-  .stat { background:var(--bg); border:1px solid var(--border); border-radius:5px; padding:0.6rem; text-align:center; }
-  .stat .v { font-family:var(--ff); font-size:1.4rem; color:var(--gold); }
-  .stat .l { font-size:0.7rem; color:var(--dim); text-transform:uppercase; letter-spacing:0.05em; margin-top:0.1rem; }
-
-  .progress { margin:1rem 0; }
-  .progress-bar { background:var(--bg); border:1px solid var(--border); border-radius:4px; height:24px; overflow:hidden; position:relative; }
-  .progress-fill { height:100%; background:linear-gradient(90deg,var(--gold-d),var(--gold)); transition:width 0.3s; border-radius:3px; }
-  .progress-text { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:0.78rem; font-weight:600; color:var(--bright); text-shadow:0 1px 3px rgba(0,0,0,0.8); }
-  .progress-msg { font-size:0.82rem; color:var(--dim); margin-top:0.4rem; }
-
-  .steps { display:flex; margin-bottom:1.2rem; border:1px solid var(--border); border-radius:5px; overflow:hidden; }
-  .step { flex:1; padding:0.5rem; text-align:center; font-size:0.78rem; font-weight:600;
-    background:var(--bg2); color:var(--dim); border-right:1px solid var(--border); }
-  .step:last-child { border-right:none; }
-  .step.active { background:rgba(212,167,67,0.1); color:var(--gold); }
-  .step.done { background:rgba(74,154,74,0.08); color:#6cc06c; }
-
-  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex;
-    align-items:center; justify-content:center; z-index:100; backdrop-filter:blur(3px); }
-  .modal { background:var(--bg2); border:1px solid var(--gold-d); border-radius:8px;
-    padding:1.3rem; max-width:700px; width:92%; max-height:80vh; overflow-y:auto; }
-  .modal h3 { font-family:var(--ff); color:var(--gold); font-size:1.15rem; margin-bottom:0.8rem; }
-
-  .level-bar { display:inline-block; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle; }
-
-  .sel-info { font-size:0.78rem; color:var(--dim); margin-left:0.5rem; }
-
-  .hidden { display:none!important; }
-  @media(max-width:600px) { header .header-title h1{font-size:1.5rem} .form-row{flex-direction:column} .fg{min-width:100%} header .header-logout{position:static;transform:none;margin-top:0.5rem} header .header-inner{flex-direction:column;gap:0.4rem} }
-</style>
+<link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<header>
-  <div class="c" style="padding-top:0;padding-bottom:0">
-    <div class="header-inner">
-      <div class="header-title">
-        <h1>⚔️ SF Gilden-Scanner <span id="appVersion" style="font-family:var(--fb);font-size:0.7rem;font-weight:600;color:var(--dim);vertical-align:middle"></span></h1>
-        <p>Finde angreifbare Gilden – nach Mitgliedern &amp; Level</p>
-      </div>
-      <div class="header-logout">
-        <button id="headerSwitchBtn" class="btn-s hidden" onclick="doSwitchCharacter()" title="Zu einem anderen Charakter auf diesem Account wechseln, ohne dich auszuloggen" style="margin-right:0.4rem">
-          🔄 Charakter wechseln
-        </button>
-        <button id="headerLogoutBtn" class="btn-d hidden" onclick="doLogout()" title="Ausloggen">
-          🚪 Ausloggen
-        </button>
-      </div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></symbol>
+  <symbol id="i-scan" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></symbol>
+  <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M8 4h8v6a4 4 0 0 1-8 0V4zM8 6H4v1a4 4 0 0 0 4 4M16 6h4v1a4 4 0 0 1-4 4M12 14v4M8 21h8"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 20a6.5 6.5 0 0 0-3-5.4"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7M12 17h.01"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path d="M9 4H5v16h4M15 8l4 4-4 4M19 12H9"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></symbol>
+  <symbol id="i-mush" viewBox="0 0 24 24"><path d="M3 12a9 8 0 0 1 18 0z"/><path d="M9 12v5a3 3 0 0 0 6 0v-5"/><path d="M8 9h.01M12 7h.01M16 9h.01"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4l12 8-12 8z"/></symbol>
+  <symbol id="i-swords" viewBox="0 0 24 24"><path d="M4 4l9 9M20 4l-9 9M3 21l4-4M21 21l-4-4M6 14l4 4M18 14l-4 4"/></symbol>
+</svg>
+
+<!-- LOGIN -->
+<div class="login-wrap" id="loginView">
+  <div class="card login">
+    <h1 data-i18n="app.title"></h1>
+    <div class="ver"><span class="appVersion"></span></div>
+    <div class="form" style="grid-template-columns:1fr">
+      <div class="field"><label for="user" data-i18n="login.user"></label><input type="text" id="user" autocomplete="username"></div>
+      <div class="field"><label for="pass" data-i18n="login.pass"></label><input type="password" id="pass" autocomplete="current-password"></div>
     </div>
+    <button class="btn" id="loginBtn" type="button" onclick="doLogin()" data-i18n="login.submit"></button>
+    <div id="loginErr" class="err"></div>
   </div>
-</header>
-<div class="c">
+</div>
 
-  <div class="steps">
-    <div class="step active" id="s1">1. Login</div>
-    <div class="step" id="s2">2. Charakter</div>
-    <div class="step" id="s3">3. Scan</div>
-    <div class="step" id="s4">4. Ergebnisse</div>
+<!-- CHARAKTERWAHL -->
+<div class="login-wrap hidden" id="charsView">
+  <div class="card login">
+    <h1 data-i18n="chars.title"></h1>
+    <div class="char-list" id="charList"></div>
   </div>
+</div>
 
-  <!-- LOGIN -->
-  <div class="card" id="loginCard">
-    <h2>🔑 SSO Login</h2>
-    <div class="form-row">
-      <div class="fg"><label>Benutzername</label><input type="text" id="user" autocomplete="username"></div>
-      <div class="fg"><label>Passwort</label><input type="password" id="pass" autocomplete="current-password"></div>
-      <button id="loginBtn" onclick="doLogin()">Einloggen</button>
-    </div>
-    <div id="loginErr" class="neg" style="font-size:0.82rem;margin-top:0.5rem"></div>
-  </div>
-
-  <!-- CHARACTER SELECT -->
-  <div class="card hidden" id="charCard">
-    <h2>🧙 Charakter wählen</h2>
-    <div id="charList"></div>
-  </div>
-
-  <!-- OWN GUILD -->
-  <div class="card hidden" id="guildCard">
-    <h2 style="display:flex;align-items:center;gap:0.6rem">
-      🏰 <span id="guildName"></span>
-      <button id="refreshFightersBtn" class="btn-s" style="margin-left:auto;font-family:var(--fb);font-size:0.75rem;padding:0.25rem 0.6rem" onclick="doRefreshOwnFighters()" title="Kampfwerte (Ausrüstung/Attribute) der eigenen aktiven Mitglieder sofort neu laden, unabhängig vom automatischen Cache">
-        🔄 Eigene Kampfwerte aktualisieren
-      </button>
-    </h2>
-    <div id="refreshFightersMsg" style="font-size:0.78rem;color:var(--dim);margin-bottom:0.4rem"></div>
-    <div class="stats" id="guildStats"></div>
-    <details>
-      <summary style="cursor:pointer;color:var(--dim);font-size:0.82rem">Mitglieder anzeigen</summary>
-      <div class="tbl-wrap" style="margin-top:0.4rem"><table id="ownMembers"><thead><tr><th>Name</th><th>Level</th></tr></thead><tbody></tbody></table></div>
-    </details>
+<!-- APP -->
+<div class="hidden" id="appView">
+  <div class="topbar">
+    <button id="menu" aria-label="Menü"><svg class="icon"><use href="#i-menu"/></svg></button>
+    <b data-i18n="app.title"></b>
   </div>
 
-  <!-- SCAN -->
-  <div class="card hidden" id="scanCard">
-    <h2>🔍 Scan</h2>
-    <p style="font-size:0.82rem;color:var(--dim);margin-bottom:0.6rem">
-      Scannt <strong>um eure Platzierung</strong> herum (oben: <strong>20 Ränge</strong>, unten: <strong>Down-Limit</strong>).<br>
-      Optional kann nach oben zusätzlich über die <strong>Ehre-Regel</strong> (≤ 3000 Ehre über euch) erweitert werden.
-    </p>
-
-    <div class="form-row" style="margin-bottom:0.8rem">
-      <div class="fg"><label>Down-Limit (unter euch)</label><input type="number" id="downLimit" value="300" min="0" max="50000"></div>
-      <div class="fg" style="flex:0;min-width:auto;flex-direction:row;align-items:center;gap:0.4rem;padding-bottom:0.25rem">
-        <input type="checkbox" id="honorUp" checked><label for="honorUp" style="white-space:nowrap">Honor-up-scan</label>
+  <div class="app">
+    <aside class="side" id="side">
+      <div class="brand">
+        <h1 data-i18n="app.title"></h1>
+        <span class="ver appVersion"></span>
+        <a class="upd hidden" id="updHint" href="#" target="_blank" rel="noopener"></a>
       </div>
-      <div class="fg" style="flex:0;min-width:auto;flex-direction:row;align-items:center;gap:0.4rem;padding-bottom:0.25rem">
-        <input type="checkbox" id="strictMode" checked><label for="strictMode" style="white-space:nowrap">Strikt-Modus</label>
-      </div>
-      <div class="fg" style="flex:0;min-width:auto;flex-direction:row;align-items:center;gap:0.4rem;padding-bottom:0.25rem">
-        <input type="checkbox" id="strictTopN" checked><label for="strictTopN" style="white-space:nowrap">Top-N Strikt</label>
-      </div>
-      <div class="fg"><label>Max Extra-Seiten (oben)</label><input type="number" id="extraUpPages" value="10" min="0" max="50"></div>
-      <div class="fg" style="flex:0;min-width:auto;flex-direction:row;align-items:center;gap:0.4rem;padding-bottom:0.25rem">
-        <input type="checkbox" id="fullUpScan"><label for="fullUpScan" style="white-space:nowrap" title="Scannt die komplette Ehrenhalle bis Rang 1, unabhängig von der Ehre-Regel und von Max Extra-Seiten. Zeigt auch (noch) nicht angreifbare Gilden zum Vormerken/Probesimulieren an.">Komplette Ehrenhalle bis Rang 1</label>
-      </div>
-    </div>
 
-    <div id="scanExisting" class="hidden" style="margin-bottom:0.8rem;padding:0.6rem;background:rgba(74,154,74,0.08);border:1px solid rgba(74,154,74,0.2);border-radius:4px;font-size:0.82rem;color:#6cc06c">
-      📁 Vorhandene Scan-Daten gefunden vom <span id="scanDate"></span>.
-      <button class="btn-s" style="margin-left:0.5rem;padding:0.2rem 0.6rem;font-size:0.78rem" onclick="loadExisting()">Laden</button>
-    </div>
+      <nav class="nav grow">
+        <div class="nav-label" data-i18n="nav.group.main"></div>
+        <a class="nbtn" data-page="overview" href="#overview"><svg class="icon"><use href="#i-home"/></svg><span data-i18n="nav.overview"></span></a>
+        <a class="nbtn" data-page="scan" href="#scan"><svg class="icon"><use href="#i-scan"/></svg><span data-i18n="nav.scan"></span></a>
+        <a class="nbtn" data-page="results" href="#results"><svg class="icon"><use href="#i-swords"/></svg><span data-i18n="nav.results"></span><span class="badge" id="navResCount" hidden></span></a>
+        <a class="nbtn" data-page="hof" href="#hof"><svg class="icon"><use href="#i-trophy"/></svg><span data-i18n="nav.hof"></span><span class="badge" id="navHofCount" hidden></span></a>
+      </nav>
 
-    <div class="form-row" style="gap:0.6rem">
-      <button id="scanBtn" onclick="doScan()">⚔️ Scan starten</button>
-      <button id="abortBtn" class="btn-d" onclick="doAbort()" disabled>⛔ Abbrechen</button>
-    </div>
+      <nav class="nav">
+        <div class="nav-label" data-i18n="nav.group.system"></div>
+        <button class="nbtn" type="button" onclick="doSwitchCharacter()"><svg class="icon"><use href="#i-users"/></svg><span data-i18n="nav.switch"></span></button>
+        <a class="nbtn" data-page="settings" href="#settings"><svg class="icon"><use href="#i-gear"/></svg><span data-i18n="nav.settings"></span></a>
+        <a class="nbtn" data-page="help" href="#help"><svg class="icon"><use href="#i-help"/></svg><span data-i18n="nav.help"></span></a>
+        <button class="nbtn danger" type="button" onclick="doLogout()"><svg class="icon"><use href="#i-out"/></svg><span data-i18n="nav.logout"></span></button>
+        <div class="who" id="who"></div>
+      </nav>
+    </aside>
 
-    <div id="progressArea" class="progress hidden">
-      <div class="progress-bar"><div class="progress-fill" id="pFill" style="width:0%"></div><div class="progress-text" id="pText"></div></div>
-      <div class="progress-msg" id="pMsg"></div>
-    </div>
+    <main class="main">
 
+      <!-- ÜBERSICHT -->
+      <section class="page" id="p-overview">
+        <div class="page-head"><h2 data-i18n="page.overview"></h2><span class="sub" id="ovSub"></span></div>
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <h3 id="guildName"></h3>
+            <button id="refreshFightersBtn" class="btn sec" type="button" onclick="doRefreshOwnFighters()" title="Kampfwerte (Ausrüstung/Attribute) der eigenen kampfbereiten Mitglieder sofort neu laden, unabhängig vom automatischen Cache">Eigene Kampfwerte aktualisieren</button>
+          </div>
+          <div class="hint" id="refreshFightersMsg"></div>
+          <div class="stats" id="guildStats"></div>
+        </div>
+        <div class="card">
+          <h3>Eure Mitglieder</h3>
+          <div class="tablewrap"><table id="ownMembers"><thead><tr><th>Name</th><th>Level</th><th title="Tritt in der Simulation für euch an">Teilnahme</th></tr></thead><tbody></tbody></table></div>
+          <p class="hint">Haken = tritt in der Simulation für euch an. Ausgegraut: nicht kampfbereit (nicht für den Angriff angemeldet oder länger als 24 Stunden offline). Noch nicht angemeldete Mitglieder lassen sich für eine Planung per Haken zuschalten, wer länger als 24 Stunden offline ist, nicht.</p>
+        </div>
+      </section>
+
+      <!-- SCAN -->
+      <section class="page" id="p-scan">
+        <div class="page-head"><h2 data-i18n="page.scan"></h2><span class="sub">Scannt um eure Platzierung herum (oben: 20 Ränge, unten: Down-Limit)</span></div>
+        <div class="card">
+          <div class="infobox">
+            <strong>Letzter Scan:</strong> <span id="lastScanInfo">Noch kein Scan für diesen Charakter.</span>
+            <button class="btn sec small hidden" id="lastScanLoad" type="button" onclick="loadExisting()" style="margin-left:0.5rem">Laden</button>
+          </div>
+          <p class="hint">Optional kann nach oben zusätzlich über die Ehre-Regel (höchstens 3000 Ehre über euch) erweitert werden.</p>
+          <div class="form">
+            <div class="field"><label for="downLimit">Down-Limit (unter euch)</label><input type="number" id="downLimit" value="300" min="0" max="50000"></div>
+            <div class="field"><label for="extraUpPages">Max Extra-Seiten (oben)</label><input type="number" id="extraUpPages" value="10" min="0" max="50"></div>
+          </div>
+          <div class="form">
+            <label class="check"><input type="checkbox" id="honorUp" checked><span>Honor-Up-Scan<small>Nach oben über die Ehre-Regel erweitern</small></span></label>
+            <label class="check"><input type="checkbox" id="strictMode" checked><span>Strikt-Modus<small>Level-für-Level-Vergleich</small></span></label>
+            <label class="check"><input type="checkbox" id="strictTopN" checked><span>Top-N Strikt<small>Gegen eure besten N kampfbereiten Mitglieder</small></span></label>
+            <label class="check" title="Scannt die komplette Ehrenhalle bis Rang 1, unabhängig von der Ehre-Regel und von Max Extra-Seiten. Zeigt auch (noch) nicht angreifbare Gilden zum Vormerken/Probesimulieren an."><input type="checkbox" id="fullUpScan"><span>Komplette Ehrenhalle bis Rang 1<small>Ohne Ehre-Filter, nur günstige Seitenabrufe</small></span></label>
+          </div>
+          <div class="row">
+            <button id="scanBtn" class="btn" type="button" onclick="doScan()"><svg class="icon"><use href="#i-scan"/></svg>Scan starten</button>
+            <button id="abortBtn" class="btn red" type="button" onclick="doAbort()" disabled>Abbrechen</button>
+          </div>
+          <div id="progressArea" class="progress hidden"><i id="pFill" style="width:0%"></i><span id="pText"></span></div>
+          <div class="hint" id="pMsg"></div>
+        </div>
+      </section>
+
+      <!-- ERGEBNISSE -->
+      <section class="page" id="p-results">
+        <div class="page-head"><h2 data-i18n="page.results"></h2><span class="sub" id="rCount"></span></div>
+        <div class="card empty" id="resEmpty">Noch keine Ergebnisse. Starte einen Scan oder lade die vorhandenen Scan-Daten.</div>
+        <div id="resContent" class="hidden">
+          <div class="card">
+            <div class="form">
+              <div class="field"><label for="fMembers">Max Mitglieder</label><input type="number" id="fMembers" placeholder="alle" min="1" max="50"></div>
+              <div class="field"><label for="fMaxLvl">Max höchstes Level</label><input type="number" id="fMaxLvl" placeholder="alle" min="1"></div>
+            </div>
+            <div class="form">
+              <label class="check"><input type="checkbox" id="fHideAtk"><span>Angegriffene ausblenden</span></label>
+              <label class="check"><input type="checkbox" id="fStrict" checked><span>Nur Strikt OK</span></label>
+            </div>
+            <div class="row">
+              <button class="btn" type="button" onclick="applyFilter()">Filtern</button>
+              <button class="btn sec" type="button" onclick="location.href='/api/export'" title="Alle Daten als JSON exportieren">JSON Export</button>
+              <button class="btn sec" type="button" onclick="exportTxt()" title="Ausgewählte Gilden als TXT exportieren">TXT Export</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="simbar sticky">
+              <span class="grow" id="selInfo">0 Gilden ausgewählt</span>
+              <button class="btn sec small" type="button" onclick="selectAllVisible('rBody')">Alle auswählen</button>
+              <button class="btn sec small" type="button" onclick="deselectAll('rBody')">Auswahl aufheben</button>
+              <span class="hint partInfo"></span>
+              <div class="colmenu" data-for="rTable"><button class="btn sec small" type="button">Spalten</button><div class="menu" hidden></div></div>
+              <label class="hint" for="simMushrooms">Pilze</label>
+              <select id="simMushrooms" style="width:auto"><option value="0" selected>0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
+              <button class="btn sec simBtn" type="button" onclick="doSimulate()" title="Ausgewählte Gilden per Kampfsimulation gegen die eigene kampfbereite Aufstellung durchrechnen">Simulieren</button>
+              <button class="btn red small simAbortBtn" type="button" onclick="doAbortSim()" disabled>Abbrechen</button>
+            </div>
+            <div class="progress hidden simProgress"><i class="simFill" style="width:0%"></i><span class="simText"></span></div>
+            <div class="hint simMsg"></div>
+            <div class="tablewrap">
+              <table id="rTable">
+                <thead><tr>
+                  <th style="width:32px" data-col="sel" data-lock><input type="checkbox" id="selAll" title="Alle auswählen / abwählen" onchange="toggleAll(this,'rBody')"></th>
+                  <th data-sort onclick="sortBy('name')" data-col="name" data-lock>Gilde <span class="arrow" id="sort_name"></span></th>
+                  <th data-sort class="num" onclick="sortBy('member_count')" data-col="members">Mitgl. <span class="arrow" id="sort_member_count"></span></th>
+                  <th data-sort class="num" onclick="sortBy('max_level')" data-col="maxlvl">Max Lvl <span class="arrow" id="sort_max_level"></span></th>
+                  <th data-sort class="num" onclick="sortBy('min_level')" data-col="minlvl">Min Lvl <span class="arrow" id="sort_min_level"></span></th>
+                  <th data-sort class="num" onclick="sortBy('avg_level')" data-col="avg">Ø Level <span class="arrow" id="sort_avg_level"></span></th>
+                  <th data-sort class="num" onclick="sortBy('rank')" data-col="rank">Rang <span class="arrow" id="sort_rank"></span></th>
+                  <th data-sort class="num" onclick="sortBy('honor')" data-col="honor">Ehre <span class="arrow" id="sort_honor"></span></th>
+                  <th data-sort class="num" onclick="sortBy('sim_win_ratio')" data-col="sim">Sim <span class="arrow" id="sort_sim_win_ratio"></span></th>
+                  <th data-col="status">Status</th>
+                  <th data-col="act" data-lock></th>
+                </tr></thead>
+                <tbody id="rBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VOLLSTÄNDIGE EHRENHALLE -->
+      <section class="page" id="p-hof">
+        <div class="page-head"><h2 data-i18n="page.hof"></h2><span class="sub" id="hofCount"></span></div>
+        <div class="card empty" id="hofEmpty">Noch keine Daten. Starte einen Scan, am besten mit "Komplette Ehrenhalle bis Rang 1".</div>
+        <div id="hofContent" class="hidden">
+          <div class="card">
+            <p class="hint">Alle beim Scan gesehenen Gilden, auch solche, die aktuell noch nicht angreifbar sind. Nützlich, um Gilden mit guter Mitgliederzahl vorab zu simulieren, bevor ihr rangmäßig in Reichweite kommt.</p>
+            <div class="form">
+              <div class="field"><label for="fHofMembers">Max Mitglieder</label><input type="number" id="fHofMembers" placeholder="alle" min="1" max="50"></div>
+            </div>
+            <div class="form">
+              <label class="check"><input type="checkbox" id="fHofOnlyNotAttackable"><span>Nur (noch) nicht angreifbare</span></label>
+            </div>
+            <button class="btn" type="button" onclick="renderHofTable()">Filtern</button>
+          </div>
+          <div class="card">
+            <div class="simbar sticky">
+              <span class="grow" id="selInfoHof">0 Gilden ausgewählt</span>
+              <button class="btn sec small" type="button" onclick="selectAllVisible('hofBody')">Alle auswählen</button>
+              <button class="btn sec small" type="button" onclick="deselectAll('hofBody')">Auswahl aufheben</button>
+              <span class="hint partInfo"></span>
+              <div class="colmenu" data-for="hofTable"><button class="btn sec small" type="button">Spalten</button><div class="menu" hidden></div></div>
+              <label class="hint" for="simMushroomsHof">Pilze</label>
+              <select id="simMushroomsHof" style="width:auto"><option value="0" selected>0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
+              <button class="btn sec simBtn" type="button" onclick="doSimulate('simMushroomsHof')" title="Funktioniert auch für noch nicht angreifbare Gilden (wird bei Bedarf live nachgeladen)">Simulieren</button>
+              <button class="btn red small simAbortBtn" type="button" onclick="doAbortSim()" disabled>Abbrechen</button>
+            </div>
+            <div class="progress hidden simProgress"><i class="simFill" style="width:0%"></i><span class="simText"></span></div>
+            <div class="hint simMsg"></div>
+            <div class="tablewrap">
+              <table id="hofTable">
+                <thead><tr>
+                  <th style="width:32px" data-col="sel" data-lock><input type="checkbox" id="selAllHof" title="Alle auswählen / abwählen" onchange="toggleAll(this,'hofBody')"></th>
+                  <th data-sort class="num" onclick="sortHofBy('rank')" data-col="rank">Rang <span class="arrow" id="hsort_rank"></span></th>
+                  <th data-sort onclick="sortHofBy('name')" data-col="name" data-lock>Gilde <span class="arrow" id="hsort_name"></span></th>
+                  <th data-sort class="num" onclick="sortHofBy('member_count')" data-col="members">Mitgl. <span class="arrow" id="hsort_member_count"></span></th>
+                  <th data-sort class="num" onclick="sortHofBy('honor')" data-col="honor">Ehre <span class="arrow" id="hsort_honor"></span></th>
+                  <th data-sort onclick="sortHofBy('attackable')" data-col="attackable">Angreifbar <span class="arrow" id="hsort_attackable"></span></th>
+                  <th data-sort class="num" onclick="sortHofBy('sim_win_ratio')" data-col="sim">Sim <span class="arrow" id="hsort_sim_win_ratio"></span></th>
+                  <th data-col="act" data-lock></th>
+                </tr></thead>
+                <tbody id="hofBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- EINSTELLUNGEN -->
+      <section class="page" id="p-settings">
+        <div class="page-head"><h2 data-i18n="page.settings"></h2><span class="sub">Gelten für den ganzen Server</span></div>
+        <div class="card">
+          <h3>Updates</h3>
+          <div class="form">
+            <div class="field"><label for="setUpdate">Auf neue Version prüfen</label>
+              <select id="setUpdate"><option value="daily">Täglich</option><option value="hourly">Stündlich</option><option value="weekly">Wöchentlich</option><option value="off">Aus</option></select></div>
+          </div>
+          <p class="hint" id="setUpdateMsg">Fragt die Tags auf Docker Hub ab und zeigt neben der Versionsnummer einen Hinweis. Das Update selbst machst du in Unraid.</p>
+          <p class="hint" id="updStatus"></p>
+        </div>
+      </section>
+
+      <!-- HILFE -->
+      <section class="page" id="p-help">
+        <div class="page-head"><h2 data-i18n="page.help"></h2><span class="sub">Was welche Option bewirkt</span></div>
+        <div class="card">
+          <details open><summary>Down-Limit (unter euch)</summary><p>Wie viele Ränge unterhalb eurer Gilde gescannt werden. Gilden unter euch sind immer angreifbar.</p></details>
+          <details><summary>Max Extra-Seiten (oben)</summary><p>Obergrenze für zusätzliche Ehrenhalle-Seiten oberhalb des festen 20-Ränge-Fensters beim Honor-Up-Scan. Wird bei "Komplette Ehrenhalle" ignoriert.</p></details>
+          <details><summary>Honor-Up-Scan</summary><p>Erweitert den Scan nach oben: Gilden über euch sind angreifbar, wenn sie höchstens 20 Ränge oder höchstens 3000 Ehre über euch liegen.</p></details>
+          <details><summary>Strikt-Modus</summary><p>Vergleicht Level für Level mit euren kampfbereiten Mitgliedern.</p></details>
+          <details><summary>Top-N Strikt</summary><p>Vergleicht die Gegner mit euren besten N kampfbereiten Mitgliedern, wobei N die Mitgliederzahl der Gegnergilde ist.</p></details>
+          <details><summary>Komplette Ehrenhalle bis Rang 1</summary><p>Scannt die gesamte Ehrenhalle bis Rang 1 ohne Ehre-Filter. Es werden nur Ehrenhalle-Seiten abgerufen, deshalb ist das auch bei hohem eigenen Rang vertretbar. Überschreibt den Honor-Up-Scan.</p></details>
+          <details><summary>Kampfbereit</summary><p>Kampfbereit sind Mitglieder, die in den letzten 24 Stunden online waren und für den Angriff angemeldet sind. Eingeladene Spieler zählen nie. Nur kampfbereite Mitglieder treten in der Simulation für euch an.</p></details>
+          <details><summary>Update-Hinweis</summary><p>Der Server fragt in dem unter Einstellungen gewählten Abstand bei Docker Hub nach der neuesten Version. Gibt es eine neuere, erscheint in der Leiste neben der Versionsnummer ein Hinweis. Aktualisiert wird der Container selbst, zum Beispiel in Unraid.</p></details>
+          <details><summary>Pilze und Simulation</summary><p>Anzahl der geladenen Riesenpilze im Pilzkatapult (0 bis 3). Jeder Pilz trifft ein zufälliges Gegnermitglied und zieht ihm die Hälfte seines Lebens ab; zwei Treffer auf dasselbe Ziel lassen nichts übrig. Die Quote ist der Anteil gewonnener Kämpfe bei 2500 Durchläufen.</p></details>
+        </div>
+      </section>
+
+    </main>
   </div>
-
-  <!-- FILTER + RESULTS -->
-  <div class="card hidden" id="resultsCard">
-    <h2>📋 Ergebnisse <span id="rCount" style="font-family:var(--fb);font-size:0.8rem;color:var(--dim);margin-left:auto"></span></h2>
-
-    <div class="form-row" style="margin-bottom:0.8rem">
-      <div class="fg"><label>Max Mitglieder</label><input type="number" id="fMembers" placeholder="alle" min="1" max="50"></div>
-      <div class="fg"><label>Max höchstes Level</label><input type="number" id="fMaxLvl" placeholder="alle" min="1"></div>
-      <div class="fg" style="flex:0;min-width:auto;flex-direction:row;align-items:center;gap:0.4rem;padding-bottom:0.25rem">
-        <input type="checkbox" id="fHideAtk"><label for="fHideAtk" style="white-space:nowrap">Angegriffene ausblenden</label>
-      </div>
-      <div class="fg" style="flex:0;min-width:auto;flex-direction:row;align-items:center;gap:0.4rem;padding-bottom:0.25rem">
-        <input type="checkbox" id="fStrict" checked><label for="fStrict" style="white-space:nowrap">Nur Strikt OK</label>
-      </div>
-      <button onclick="applyFilter()">Filtern</button>
-      <button class="btn-s" onclick="location.href='/api/export'" title="Alle Daten als JSON exportieren">📥 JSON Export</button>
-      <button class="btn-txt" onclick="exportTxt()" title="Ausgewählte Gilden als TXT exportieren">📄 TXT Export</button>
-    </div>
-
-    <!-- Selection info bar -->
-    <div id="selBar" style="margin-bottom:0.5rem;font-size:0.82rem;color:var(--dim);display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
-      <span id="selInfo">0 Gilden ausgewählt</span>
-      <button class="btn-s" style="padding:0.15rem 0.5rem;font-size:0.75rem" onclick="selectAllVisible('rBody')">Alle auswählen</button>
-      <button class="btn-s" style="padding:0.15rem 0.5rem;font-size:0.75rem" onclick="deselectAll('rBody')">Auswahl aufheben</button>
-      <span style="margin-left:auto;display:flex;align-items:center;gap:0.4rem">
-        <label for="simMushrooms" style="text-transform:none;font-size:0.82rem;color:var(--dim)">🍄 Pilze</label>
-        <select id="simMushrooms" style="padding:0.2rem 0.4rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--txt)">
-          <option value="0" selected>0</option>
-          <option value="1">1</option>
-          <option value="2">2</option>
-          <option value="3">3</option>
-        </select>
-        <button id="simBtn" class="btn-txt" style="padding:0.3rem 0.7rem;font-size:0.8rem" onclick="doSimulate()" title="Ausgewählte Gilden per Kampfsimulation gegen die eigene aktive Aufstellung durchrechnen">🎲 Simulieren</button>
-        <button id="simAbortBtn" class="btn-d" style="padding:0.3rem 0.7rem;font-size:0.8rem" onclick="doAbortSim()" disabled>⛔</button>
-      </span>
-    </div>
-
-    <div id="simProgressArea" class="progress hidden">
-      <div class="progress-bar"><div class="progress-fill" id="simFill" style="width:0%"></div><div class="progress-text" id="simText"></div></div>
-      <div class="progress-msg" id="simMsg"></div>
-    </div>
-
-    <div class="tbl-wrap">
-      <table id="rTable">
-        <thead><tr>
-          <th class="no-sort" style="width:32px"><input type="checkbox" id="selAll" title="Alle auswählen / abwählen" onchange="toggleAll(this,'rBody')"></th>
-          <th onclick="sortBy('name')">Gilde <span class="arrow" id="sort_name"></span></th>
-          <th onclick="sortBy('member_count')">Mitgl. <span class="arrow" id="sort_member_count"></span></th>
-          <th onclick="sortBy('max_level')">Max Lvl <span class="arrow" id="sort_max_level"></span></th>
-          <th onclick="sortBy('min_level')">Min Lvl <span class="arrow" id="sort_min_level"></span></th>
-          <th onclick="sortBy('avg_level')">Ø Level <span class="arrow" id="sort_avg_level"></span></th>
-          <th onclick="sortBy('rank')">Rang <span class="arrow" id="sort_rank"></span></th>
-          <th onclick="sortBy('honor')">Ehre <span class="arrow" id="sort_honor"></span></th>
-          <th onclick="sortBy('sim_win_ratio')">🎲 Sim <span class="arrow" id="sort_sim_win_ratio"></span></th>
-          <th>Status</th>
-          <th></th>
-        </tr></thead>
-        <tbody id="rBody"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- VOLLSTÄNDIGE EHRENHALLE (inkl. nicht angreifbare Gilden zum Vormerken/Probesimulieren) -->
-  <div class="card hidden" id="hofCard">
-    <h2>🏆 Vollständige Ehrenhalle <span id="hofCount" style="font-family:var(--fb);font-size:0.8rem;color:var(--dim);margin-left:auto"></span></h2>
-    <p style="font-size:0.82rem;color:var(--dim);margin-bottom:0.6rem">
-      Alle beim Scan gesehenen Gilden, auch solche, die aktuell <strong>noch nicht</strong> angreifbar sind. Nützlich, um Gilden mit guter Mitgliederzahl vorab zu simulieren, bevor ihr rangmäßig in Reichweite kommt.
-    </p>
-
-    <div class="form-row" style="margin-bottom:0.8rem">
-      <div class="fg"><label>Max Mitglieder</label><input type="number" id="fHofMembers" placeholder="alle" min="1" max="50"></div>
-      <div class="fg" style="flex:0;min-width:auto;flex-direction:row;align-items:center;gap:0.4rem;padding-bottom:0.25rem">
-        <input type="checkbox" id="fHofOnlyNotAttackable"><label for="fHofOnlyNotAttackable" style="white-space:nowrap">Nur (noch) nicht angreifbare</label>
-      </div>
-      <button onclick="renderHofTable()">Filtern</button>
-    </div>
-
-    <div id="hofSelBar" style="margin-bottom:0.5rem;font-size:0.82rem;color:var(--dim);display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
-      <span id="selInfoHof">0 Gilden ausgewählt</span>
-      <button class="btn-s" style="padding:0.15rem 0.5rem;font-size:0.75rem" onclick="selectAllVisible('hofBody')">Alle auswählen</button>
-      <button class="btn-s" style="padding:0.15rem 0.5rem;font-size:0.75rem" onclick="deselectAll('hofBody')">Auswahl aufheben</button>
-      <span style="margin-left:auto;display:flex;align-items:center;gap:0.4rem">
-        <label for="simMushroomsHof" style="text-transform:none;font-size:0.82rem;color:var(--dim)">🍄 Pilze</label>
-        <select id="simMushroomsHof" style="padding:0.2rem 0.4rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--txt)">
-          <option value="0" selected>0</option>
-          <option value="1">1</option>
-          <option value="2">2</option>
-          <option value="3">3</option>
-        </select>
-        <button class="btn-txt" style="padding:0.3rem 0.7rem;font-size:0.8rem" onclick="doSimulate('simMushroomsHof')" title="Ausgewählte Gilden per Kampfsimulation gegen die eigene aktive Aufstellung durchrechnen — funktioniert auch für noch nicht angreifbare Gilden (wird bei Bedarf live nachgeladen)">🎲 Simulieren</button>
-      </span>
-    </div>
-
-    <div class="tbl-wrap">
-      <table id="hofTable">
-        <thead><tr>
-          <th class="no-sort" style="width:32px"><input type="checkbox" id="selAllHof" title="Alle auswählen / abwählen" onchange="toggleAll(this,'hofBody')"></th>
-          <th onclick="sortHofBy('rank')">Rang <span class="arrow" id="hsort_rank"></span></th>
-          <th onclick="sortHofBy('name')">Gilde <span class="arrow" id="hsort_name"></span></th>
-          <th onclick="sortHofBy('member_count')">Mitgl. <span class="arrow" id="hsort_member_count"></span></th>
-          <th onclick="sortHofBy('honor')">Ehre <span class="arrow" id="hsort_honor"></span></th>
-          <th onclick="sortHofBy('attackable')">Angreifbar <span class="arrow" id="hsort_attackable"></span></th>
-          <th onclick="sortHofBy('sim_win_ratio')">🎲 Sim <span class="arrow" id="hsort_sim_win_ratio"></span></th>
-          <th></th>
-        </tr></thead>
-        <tbody id="hofBody"></tbody>
-      </table>
-    </div>
-  </div>
-
 </div>
 
 <!-- DETAIL MODAL -->
@@ -335,640 +270,12 @@
     <h3 id="mTitle"></h3>
     <div id="mBody"></div>
     <div style="text-align:right;margin-top:0.8rem">
-      <button class="btn-s" onclick="$('modal').classList.add('hidden')">Schließen</button>
+      <button class="btn sec" type="button" onclick="$('modal').classList.add('hidden')">Schließen</button>
     </div>
   </div>
 </div>
 
-<script>
-const $=id=>document.getElementById(id);
-
-let results=[], ownGuild=null;
-let sortKey='rank', sortDir='asc';
-let hofResults=[];
-let hofSortKey='rank', hofSortDir='asc';
-let hasScanData=false, scanDate='';
-// Namen der per Checkbox ausgewählten Gilden — bleibt über renderTable()-
-// Neuaufbauten hinweg bestehen (z.B. nach applyFilter() nach Simulationsende),
-// damit die Häkchen nicht bei jedem Neurendern verschwinden.
-let selectedGuilds=new Set();
-
-function setStep(n){for(let i=1;i<=4;i++){const e=$('s'+i);e.className='step';if(i<n)e.classList.add('done');if(i===n)e.classList.add('active');}}
-
-async function api(ep,data){
-  const opts=data!==undefined
-    ?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})}
-    :{};
-  const r=await fetch('/api/'+ep,opts);
-  return r.json();
-}
-
-function fmt1(n){return (typeof n==='number'?n:0).toLocaleString('de',{minimumFractionDigits:1,maximumFractionDigits:1});}
-
-// ── LOGIN ──────────────────────────────────────────────────
-async function doLogin(){
-  const u=$('user').value.trim(), p=$('pass').value;
-  if(!u||!p)return;
-  $('loginBtn').disabled=true; $('loginErr').textContent='';
-  try{
-    const r=await api('login',{username:u,password:p});
-    if(!r.success){$('loginErr').textContent=r.error;return;}
-    showChars(r.data); setStep(2);
-  }catch(e){$('loginErr').textContent='Verbindungsfehler';}
-  finally{$('loginBtn').disabled=false;}
-}
-$('pass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
-
-// ── CHARACTER ──────────────────────────────────────────────
-function showChars(chars){
-  $('loginCard').classList.add('hidden');
-  $('charCard').classList.remove('hidden');
-  const l=$('charList'); l.innerHTML='';
-  chars.forEach(c=>{
-    const b=document.createElement('button');
-    b.style.cssText='margin:0 0.4rem 0.4rem 0';
-    try{b.textContent=`${c.name} (${new URL(c.server).hostname})`;}catch(e){b.textContent=c.name;}
-    b.onclick=()=>selectChar(c.index);
-    l.appendChild(b);
-  });
-}
-
-async function selectChar(idx){
-  $('charCard').querySelectorAll('button').forEach(b=>b.disabled=true);
-  // Stand eines evtl. vorher gewählten Charakters (bei Charakterwechsel)
-  // nicht mit rüberschleppen.
-  hasScanData=false; scanDate='';
-  $('scanExisting').classList.add('hidden');
-  $('resultsCard').classList.add('hidden');
-  try{
-    const r=await api('select-character',{index:idx});
-    if(!r.success){alert(r.error);return;}
-    showGuild(r.data); setStep(3);
-    // Logout- und Wechsel-Button im Header anzeigen
-    $('headerLogoutBtn').classList.remove('hidden');
-    $('headerSwitchBtn').classList.remove('hidden');
-    // Check for existing scan
-    const st=await api('status');
-    if(st.data?.has_scan_data){
-      hasScanData=true; scanDate=st.data.scan_date||'';
-      $('scanDate').textContent=scanDate;
-      $('scanExisting').classList.remove('hidden');
-    }
-  }catch(e){alert('Fehler: '+e.message);}
-  finally{$('charCard').querySelectorAll('button').forEach(b=>b.disabled=false);}
-}
-
-// ── CHARAKTER WECHSELN ──────────────────────────────────────
-// Wechselt zu einem anderen Charakter auf demselben SSO-Account, ohne
-// sich neu einzuloggen (alle Charaktere sind schon aus dem Login bekannt).
-async function doSwitchCharacter(){
-  try{
-    const r=await api('characters');
-    if(!r.success){alert(r.error);return;}
-    $('guildCard').classList.add('hidden');
-    $('scanCard').classList.add('hidden');
-    $('resultsCard').classList.add('hidden');
-    $('modal').classList.add('hidden');
-    showChars(r.data);
-    setStep(2);
-  }catch(e){alert('Fehler: '+e.message);}
-}
-
-// ── OWN GUILD ──────────────────────────────────────────────
-function showGuild(g){
-  ownGuild=g;
-  $('charCard').classList.add('hidden');
-  $('guildCard').classList.remove('hidden');
-  $('scanCard').classList.remove('hidden');
-  $('guildName').textContent=g.name;
-
-  const ownMax=Math.max(...g.members.map(m=>m.level));
-  const ownMin=Math.min(...g.members.map(m=>m.level));
-  const ownTotal=g.members.reduce((s,m)=>s+m.level,0);
-  const ownAvg=(g.member_count>0)?(ownTotal/g.member_count):0;
-  $('guildStats').innerHTML=`
-    <div class="stat"><div class="v">${g.member_count}</div><div class="l">Mitglieder</div></div>
-    <div class="stat"><div class="v">${(g.active_member_count??g.member_count)}</div><div class="l" title="Online in den letzten 24 Stunden und für den Angriff angemeldet">Kampfbereit</div></div>
-    <div class="stat"><div class="v">${ownMax}</div><div class="l">Max Level</div></div>
-    <div class="stat"><div class="v">${ownMin}</div><div class="l">Min Level</div></div>
-    <div class="stat"><div class="v">${ownAvg.toLocaleString('de',{minimumFractionDigits:1,maximumFractionDigits:1})}</div><div class="l">Ø Level</div></div>
-    <div class="stat"><div class="v">#${g.rank}</div><div class="l">Rang</div></div>
-    <div class="stat"><div class="v">${g.honor.toLocaleString('de')}</div><div class="l">Ehre</div></div>`;
-
-  const tb=$('ownMembers').querySelector('tbody'); tb.innerHTML='';
-  [...g.members].sort((a,b)=>b.level-a.level).forEach(m=>{
-    const tr=document.createElement('tr');
-    const off=(m.offline_days!=null && m.offline_days>=1)?` <span class=\"badge b-red\" title=\"offline seit ${m.offline_days} Tagen\">off ${m.offline_days}d</span>`:'';
-    const nj=(m.attack_joined===false)?` <span class=\"badge b-red\" title=\"Nicht für den Angriff angemeldet, kämpft nicht mit\">nicht angemeldet</span>`:'';
-    tr.innerHTML=`<td>${esc(m.name)}${off}${nj}</td><td>${m.level} ${levelBar(m.level,ownMax)}</td>`;
-    tb.appendChild(tr);
-  });
-}
-
-function levelBar(lvl,max){
-  const pct=max>0?Math.round(lvl/max*100):0;
-  const clr=pct>80?'var(--gold)':pct>50?'var(--blue)':'var(--dim)';
-  return `<span class="level-bar" style="width:${Math.max(pct,3)}px;background:${clr}"></span>`;
-}
-
-// ── SCAN ───────────────────────────────────────────────────
-async function doScan(){
-  const down=parseInt($('downLimit').value||'300');
-  const honorUp=$('honorUp').checked;
-  const strict=$('strictMode').checked;
-  const strictTopN=$('strictTopN')?$('strictTopN').checked:true;
-  const extra=parseInt($('extraUpPages').value||'10');
-  const fullUpScan=$('fullUpScan')?$('fullUpScan').checked:false;
-
-  $('scanBtn').disabled=true;
-  $('abortBtn').disabled=false;
-  $('progressArea').classList.remove('hidden');
-  $('pMsg').classList.remove('neg');
-
-  try{
-    const r=await api('scan',{down_limit:down,honor_up_scan:honorUp,max_extra_up_pages:extra,strict_mode:strict,strict_topn:strictTopN,full_up_scan:fullUpScan});
-    if(!r.success){$('pMsg').textContent=r.error; $('pMsg').classList.add('neg'); $('scanBtn').disabled=false; $('abortBtn').disabled=true; return;}
-    pollProgress();
-  }catch(e){$('pMsg').textContent='Fehler: '+e.message; $('scanBtn').disabled=false; $('abortBtn').disabled=true;}
-}
-
-async function doAbort(){
-  $('abortBtn').disabled=true;
-  try{
-    const r=await api('scan/abort',{});
-    if(!r.success){$('pMsg').textContent=r.error; $('pMsg').classList.add('neg'); return;}
-    $('pMsg').textContent=r.data||'Abbruch angefordert...';
-  }catch(e){$('pMsg').textContent='Fehler: '+e.message; $('pMsg').classList.add('neg');}
-}
-
-async function pollProgress(){
-  try{
-    const r=await api('progress');
-    if(!r.success)return;
-    const p=r.data;
-    const pct=p.total>0?Math.round(p.current/p.total*100):0;
-
-    if(p.phase==='hof'){
-      $('pFill').style.width=pct+'%';
-      $('pText').textContent=`HoF: ${p.current} / ${p.total} Seiten`;
-    }else if(p.phase==='details'){
-      $('pFill').style.width=pct+'%';
-      $('pText').textContent=`${p.current} / ${p.total} Gilden`;
-    }else if(p.phase==='done' || p.phase==='aborted'){
-      $('pFill').style.width='100%';
-      $('pText').textContent=p.phase==='done'?'✓ Fertig!':'⚠️ Abgebrochen';
-      $('scanBtn').disabled=false;
-      $('abortBtn').disabled=true;
-      setStep(4);
-      applyFilter();
-      $('pMsg').textContent=p.message;
-      return;
-    }
-
-    $('pMsg').textContent=p.message;
-    if(p.running) setTimeout(pollProgress, 800);
-    else {
-      $('scanBtn').disabled=false;
-      $('abortBtn').disabled=true;
-      if(p.phase==='error') $('pMsg').classList.add('neg');
-    }
-  }catch(e){setTimeout(pollProgress,2000);}
-}
-
-async function loadExisting(){
-  applyFilter();
-}
-
-// ── FILTER & RESULTS ───────────────────────────────────────
-async function applyFilter(){
-  const maxM=$('fMembers').value?parseInt($('fMembers').value):null;
-  const maxLvl=$('fMaxLvl').value?parseInt($('fMaxLvl').value):null;
-  const hideAtk=$('fHideAtk').checked;
-  const strictOnly=$('fStrict').checked;
-
-  try{
-    const r=await api('results',{max_members:maxM,max_highest_level:maxLvl,hide_attacked:hideAtk,strict_only:strictOnly});
-    if(!r.success){alert(r.error);return;}
-    results=r.data.guilds;
-    ownGuild=r.data.own_guild;
-    results.forEach(g=>{ g.avg_level = (g.member_count>0)?(g.total_level/g.member_count):0; });
-    if(ownGuild && Array.isArray(ownGuild.members)){
-      const sum=ownGuild.members.reduce((s,m)=>s+m.level,0);
-      ownGuild.avg_level = (ownGuild.member_count>0)?(sum/ownGuild.member_count):0;
-    }
-    const strictHint = strictOnly ? ' (Strikt OK)' : '';
-    $('rCount').textContent=`${r.data.filtered_count} / ${r.data.total_attackable} Kandidaten${strictHint} | Scan: ${r.data.scanned_at}`;
-    $('resultsCard').classList.remove('hidden');
-    setStep(4);
-    renderTable();
-
-    hofResults=r.data.hof_guilds||[];
-    if(hofResults.length){
-      $('hofCard').classList.remove('hidden');
-      renderHofTable();
-    }
-  }catch(e){alert('Fehler: '+e.message);}
-}
-
-function renderTable(){
-  const tb=$('rBody'); tb.innerHTML='';
-
-  // Update sort arrows
-  document.querySelectorAll('th .arrow').forEach(a=>a.textContent='');
-  const arrow=$('sort_'+sortKey);
-  if(arrow)arrow.textContent=sortDir==='asc'?' ▲':' ▼';
-
-  const sorted=[...results].sort((a,b)=>{
-    let va=a[sortKey],vb=b[sortKey];
-    if(sortKey==='sim_win_ratio'){va=va??-1;vb=vb??-1;}
-    if(typeof va==='string'){va=va.toLowerCase();vb=vb.toLowerCase();}
-    if(va<vb)return sortDir==='asc'?-1:1;
-    if(va>vb)return sortDir==='asc'?1:-1;
-    return 0;
-  });
-
-  const ownAvg=(ownGuild && typeof ownGuild.avg_level==='number')?ownGuild.avg_level:(ownGuild.member_count>0?ownGuild.members.reduce((s,m)=>s+m.level,0)/ownGuild.member_count:0);
-  const ownMax=Math.max(...ownGuild.members.map(m=>m.level));
-
-  sorted.forEach(g=>{
-    const tr=document.createElement('tr');
-    const avgDiff=(g.avg_level??((g.member_count>0)?(g.total_level/g.member_count):0)) - ownAvg;
-    const avgCls=avgDiff<0?'pos':avgDiff>0?'neg':'neu';
-    const memberDiff=g.member_count-ownGuild.member_count;
-    const memberCls=memberDiff<0?'pos':memberDiff>0?'neg':'neu';
-    const maxCls=g.max_level<ownMax?'pos':g.max_level>ownMax?'neg':'neu';
-    const atk=g.is_attacked?'<span class="badge b-red">⚔ Angegriffen</span>':'<span class="badge b-grn">Frei</span>';
-    const strictBadge=g.strict_evaluated?(g.strict_beatable?'<span class="badge b-grn">✔ Strikt</span>':'<span class="badge b-red">✖ Strikt</span>'):'';
-    let simCell='<span class="neu">–</span>';
-    if(g.sim_win_ratio!=null){
-      const pct=g.sim_win_ratio*100;
-      const cls=pct>=66?'pos':pct>=33?'neu':'neg';
-      const mush=g.sim_mushrooms?` <span title="Pilze im Katapult">🍄${g.sim_mushrooms}</span>`:'';
-      simCell=`<span class="${cls}">${pct.toFixed(1)}%</span>${mush}`;
-    }
-
-    tr.innerHTML=`
-      <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" ${selectedGuilds.has(g.name)?'checked':''} onchange="toggleGuildSelection(this)"></td>
-      <td><strong>${esc(g.name)}</strong></td>
-      <td class="${memberCls}">${g.member_count}</td>
-      <td class="${maxCls}">${g.max_level}</td>
-      <td>${g.min_level}</td>
-      <td class="${avgCls}">${(g.avg_level??0).toLocaleString('de',{minimumFractionDigits:1,maximumFractionDigits:1})}</td>
-      <td>#${g.rank}</td>
-      <td>${g.honor.toLocaleString('de')}</td>
-      <td>${simCell}</td>
-      <td>${atk} ${strictBadge?'<br>'+strictBadge:''}</td>
-      <td><button class="btn-s" style="padding:0.25rem 0.5rem;font-size:0.75rem" data-g="${esc(g.name)}" onclick="showDetail(this.dataset.g)">👁</button></td>`;
-    tb.appendChild(tr);
-  });
-
-  // Erst jetzt, mit den tatsächlich gerenderten (ggf. vorbelegten) Checkboxen,
-  // Zähler + Header-Checkbox-Zustand berechnen.
-  updateSelInfo();
-}
-
-function sortBy(key){
-  if(sortKey===key)sortDir=sortDir==='asc'?'desc':'asc';
-  else{sortKey=key;sortDir=key==='name'?'asc':'asc';}
-  renderTable();
-}
-
-// ── VOLLSTÄNDIGE EHRENHALLE ──────────────────────────────────
-function sortHofBy(key){
-  if(hofSortKey===key)hofSortDir=hofSortDir==='asc'?'desc':'asc';
-  else{hofSortKey=key;hofSortDir=key==='name'?'asc':'asc';}
-  renderHofTable();
-}
-
-function renderHofTable(){
-  const maxM=$('fHofMembers').value?parseInt($('fHofMembers').value):null;
-  const onlyNotAttackable=$('fHofOnlyNotAttackable').checked;
-
-  const visible=hofResults.filter(g=>{
-    if(maxM!=null && g.member_count>maxM) return false;
-    if(onlyNotAttackable && g.attackable) return false;
-    return true;
-  });
-
-  $('hofCount').textContent=`${visible.length} / ${hofResults.length} Gilden`;
-
-  document.querySelectorAll('#hofTable th .arrow').forEach(a=>a.textContent='');
-  const arrow=$('hsort_'+hofSortKey);
-  if(arrow)arrow.textContent=hofSortDir==='asc'?' ▲':' ▼';
-
-  const sorted=[...visible].sort((a,b)=>{
-    let va=a[hofSortKey],vb=b[hofSortKey];
-    if(hofSortKey==='sim_win_ratio'){va=va??-1;vb=vb??-1;}
-    if(typeof va==='boolean'){va=va?1:0;vb=vb?1:0;}
-    if(typeof va==='string'){va=va.toLowerCase();vb=vb.toLowerCase();}
-    if(va<vb)return hofSortDir==='asc'?-1:1;
-    if(va>vb)return hofSortDir==='asc'?1:-1;
-    return 0;
-  });
-
-  const tb=$('hofBody'); tb.innerHTML='';
-  sorted.forEach(g=>{
-    const tr=document.createElement('tr');
-    const atkBadge=g.attackable?'<span class="badge b-grn">✔ Ja</span>':'<span class="badge b-red">✖ Nein</span>';
-    let simCell='<span class="neu">–</span>';
-    if(g.sim_win_ratio!=null){
-      const pct=g.sim_win_ratio*100;
-      const cls=pct>=66?'pos':pct>=33?'neu':'neg';
-      const mush=g.sim_mushrooms?` <span title="Pilze im Katapult">🍄${g.sim_mushrooms}</span>`:'';
-      simCell=`<span class="${cls}">${pct.toFixed(1)}%</span>${mush}`;
-    }
-    tr.innerHTML=`
-      <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" ${selectedGuilds.has(g.name)?'checked':''} onchange="toggleGuildSelection(this)"></td>
-      <td>#${g.rank}</td>
-      <td><strong>${esc(g.name)}</strong></td>
-      <td>${g.member_count}</td>
-      <td>${g.honor.toLocaleString('de')}</td>
-      <td>${atkBadge}</td>
-      <td>${simCell}</td>
-      <td><button class="btn-s" style="padding:0.25rem 0.5rem;font-size:0.75rem" data-g="${esc(g.name)}" onclick="showDetail(this.dataset.g)">👁</button></td>`;
-    tb.appendChild(tr);
-  });
-
-  updateSelInfo();
-}
-
-// ── CHECKBOX SELECTION ─────────────────────────────────────
-// selectedGuilds ist die eigentliche Quelle der Wahrheit für die Auswahl
-// (übersteht renderTable()-Neuaufbauten, z.B. nach einer Simulation); die
-// Checkbox-Elemente selbst sind nur die aktuelle visuelle Darstellung davon.
-function toggleGuildSelection(cb){
-  if(cb.checked) selectedGuilds.add(cb.dataset.name);
-  else selectedGuilds.delete(cb.dataset.name);
-  updateSelInfo();
-}
-
-// Es gibt zwei Tabellen mit eigenen Checkboxen (Ergebnisse + Vollständige
-// Ehrenhalle), die sich denselben selectedGuilds-Auswahltopf teilen — aber
-// "Alle auswählen"/"Auswahl aufheben" sollen nur die jeweils EIGENE Tabelle
-// betreffen, nicht beide gleichzeitig. Deshalb hier per tbody-Id skopiert.
-function scopeEl(scopeId){
-  return scopeId ? $(scopeId) : document;
-}
-
-function toggleAll(cb, scopeId){
-  scopeEl(scopeId).querySelectorAll('.gsel').forEach(c=>{
-    c.checked=cb.checked;
-    if(cb.checked) selectedGuilds.add(c.dataset.name);
-    else selectedGuilds.delete(c.dataset.name);
-  });
-  updateSelInfo();
-}
-
-function selectAllVisible(scopeId){
-  scopeEl(scopeId).querySelectorAll('.gsel').forEach(c=>{
-    c.checked=true;
-    selectedGuilds.add(c.dataset.name);
-  });
-  updateSelInfo();
-}
-
-function deselectAll(scopeId){
-  scopeEl(scopeId).querySelectorAll('.gsel').forEach(c=>{
-    c.checked=false;
-    selectedGuilds.delete(c.dataset.name);
-  });
-  updateSelInfo();
-}
-
-// Zähler-Text ist bewusst über beide Tabellen kombiniert (zeigt die
-// gesamte Simulations-Warteschlange); die Header-Checkbox jeder Tabelle
-// spiegelt aber nur den Zustand ihrer EIGENEN Zeilen.
-function updateSelInfo(){
-  const total=document.querySelectorAll('.gsel').length;
-  const checked=document.querySelectorAll('.gsel:checked').length;
-  const text=`${checked} von ${total} Gilden ausgewählt`;
-  $('selInfo').textContent=text;
-  const hofInfo=$('selInfoHof'); if(hofInfo) hofInfo.textContent=text;
-
-  syncSelectAllCheckbox('rBody','selAll');
-  syncSelectAllCheckbox('hofBody','selAllHof');
-}
-
-function syncSelectAllCheckbox(scopeId, checkboxId){
-  const scope=$(scopeId), cb=$(checkboxId);
-  if(!scope || !cb) return;
-  const total=scope.querySelectorAll('.gsel').length;
-  const checked=scope.querySelectorAll('.gsel:checked').length;
-  if(total>0){
-    cb.indeterminate = checked>0 && checked<total;
-    if(checked===total) cb.checked=true;
-    if(checked===0) cb.checked=false;
-  } else {
-    cb.indeterminate=false;
-    cb.checked=false;
-  }
-}
-
-// ── TXT EXPORT ─────────────────────────────────────────────
-function exportTxt(){
-  const checked=[...document.querySelectorAll('.gsel:checked')].map(c=>c.dataset.name);
-  if(!checked.length){
-    alert('Keine Gilden ausgewählt.\nBitte zuerst die gewünschten Gilden per Checkbox markieren.');
-    return;
-  }
-  const content=checked.join('/');
-  const blob=new Blob([content],{type:'text/plain;charset=utf-8'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download='gilden_angriff.txt';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(a.href);
-}
-
-// ── KAMPF-SIMULATION ───────────────────────────────────────
-async function doRefreshOwnFighters(){
-  $('refreshFightersBtn').disabled=true;
-  $('refreshFightersMsg').textContent='Lädt eigene Kampfwerte (Ausrüstung/Attribute) neu...';
-  try{
-    const r=await api('refresh-own-fighters',{});
-    $('refreshFightersMsg').textContent=r.success?('✓ '+r.data):('Fehler: '+r.error);
-  }catch(e){$('refreshFightersMsg').textContent='Fehler: '+e.message;}
-  finally{$('refreshFightersBtn').disabled=false;}
-}
-
-async function doSimulate(mushroomSelectId){
-  const checked=[...document.querySelectorAll('.gsel:checked')].map(c=>c.dataset.name);
-  if(!checked.length){
-    alert('Keine Gilden ausgewählt.\nBitte zuerst die gewünschten Gilden per Checkbox markieren.');
-    return;
-  }
-  const mushrooms=parseInt($(mushroomSelectId||'simMushrooms').value||'0');
-
-  // Progress-Anzeige/Buttons sind bewusst gemeinsam für beide Tabellen
-  // (Ergebnisse + Vollständige Ehrenhalle) — es kann eh immer nur eine
-  // Simulation gleichzeitig laufen.
-  $('simBtn').disabled=true;
-  $('simAbortBtn').disabled=false;
-  $('simProgressArea').classList.remove('hidden');
-  $('simMsg').classList.remove('neg');
-
-  try{
-    const r=await api('simulate',{guild_names:checked,mushrooms});
-    if(!r.success){$('simMsg').textContent=r.error; $('simMsg').classList.add('neg'); $('simBtn').disabled=false; $('simAbortBtn').disabled=true; return;}
-    pollSimProgress();
-  }catch(e){$('simMsg').textContent='Fehler: '+e.message; $('simBtn').disabled=false; $('simAbortBtn').disabled=true;}
-}
-
-async function doAbortSim(){
-  $('simAbortBtn').disabled=true;
-  try{
-    const r=await api('simulate/abort',{});
-    $('simMsg').textContent=r.success?(r.data||'Abbruch angefordert...'):r.error;
-    if(!r.success)$('simMsg').classList.add('neg');
-  }catch(e){$('simMsg').textContent='Fehler: '+e.message; $('simMsg').classList.add('neg');}
-}
-
-async function pollSimProgress(){
-  try{
-    const r=await api('simulate/progress');
-    if(!r.success)return;
-    const p=r.data;
-    const pct=p.total>0?Math.round(p.current/p.total*100):0;
-
-    if(p.phase==='own-roster'){
-      $('simFill').style.width='5%';
-      $('simText').textContent='Eigene Kampfwerte...';
-    }else if(p.phase==='guilds'){
-      $('simFill').style.width=pct+'%';
-      $('simText').textContent=`${p.current} / ${p.total} Gilden`;
-    }else if(p.phase==='done' || p.phase==='aborted'){
-      $('simFill').style.width='100%';
-      $('simText').textContent=p.phase==='done'?'✓ Fertig!':'⚠️ Abgebrochen';
-      $('simBtn').disabled=false;
-      $('simAbortBtn').disabled=true;
-      $('simMsg').textContent=p.message;
-      applyFilter();
-      return;
-    }
-
-    $('simMsg').textContent=p.message;
-    if(p.running) setTimeout(pollSimProgress, 800);
-    else {
-      $('simBtn').disabled=false;
-      $('simAbortBtn').disabled=true;
-      if(p.phase==='error') $('simMsg').classList.add('neg');
-    }
-  }catch(e){setTimeout(pollSimProgress,2000);}
-}
-
-// ── DETAIL MODAL ───────────────────────────────────────────
-async function showDetail(name){
-  $('mTitle').textContent='Lade...';
-  $('mBody').innerHTML='<div style="text-align:center;color:var(--dim)">⏳</div>';
-  $('modal').classList.remove('hidden');
-
-  const cached=results.find(g=>g.name===name);
-  if(cached){renderDetail(cached);return;}
-
-  try{
-    const r=await api('guild-details',{name});
-    if(!r.success){$('mTitle').textContent='Fehler';$('mBody').textContent=r.error;return;}
-    renderDetail(r.data);
-  }catch(e){$('mTitle').textContent='Fehler';$('mBody').textContent=e.message;}
-}
-
-function renderDetail(g){
-  $('mTitle').textContent=`🏰 ${g.name}`;
-  const maxLvl=g.max_level||Math.max(...g.members.map(m=>m.level));
-
-  const ownAvg=(ownGuild && typeof ownGuild.avg_level==='number')?ownGuild.avg_level:(ownGuild.member_count>0?ownGuild.members.reduce((s,m)=>s+m.level,0)/ownGuild.member_count:0);
-  const ownMax=Math.max(...ownGuild.members.map(m=>m.level));
-  const gAvg=(g.member_count>0)?(g.total_level/g.member_count):0;
-
-  let cmp='';
-  if(ownGuild){
-    const avgDiff=gAvg-ownAvg;
-    const memberDiff=g.member_count-ownGuild.member_count;
-    const maxDiff=maxLvl-ownMax;
-    cmp=`<div style="margin-bottom:0.8rem;padding:0.5rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.82rem">
-      <strong style="color:var(--gold)">Vergleich mit ${esc(ownGuild.name)}:</strong><br>
-      Mitglieder: <span class="${memberDiff<=0?'pos':'neg'}">${memberDiff>0?'+':''}${memberDiff}</span> |
-      Ø Level: <span class="${avgDiff<=0?'pos':'neg'}">${avgDiff>0?'+':''}${fmt1(avgDiff)}</span> |
-      Max Level: <span class="${maxDiff<=0?'pos':'neg'}">${maxDiff>0?'+':''}${maxDiff}</span>
-    </div>`;
-  }
-
-  let strictHtml='';
-  if(g.strict_evaluated){
-    const mode=g.strict_topn?' (Top-N)':'';
-    const badge=g.strict_beatable?'<span class="badge b-grn">✔ Strikt besiegbar</span>':'<span class="badge b-red">✖ Strikt NICHT</span>';
-    const reason=(!g.strict_beatable && g.strict_fail_reason)?`<div style="margin-top:0.35rem;color:var(--dim)">${esc(g.strict_fail_reason)}</div>`:'';
-    strictHtml=`<div style="margin-bottom:0.8rem;padding:0.5rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.82rem">
-      <strong style="color:var(--gold)">Strikt-Modus${mode}:</strong> ${badge}<br>
-      Eigene kampfbereit: <span class="b-gld badge">${g.strict_own_active_members}</span> | Gegner: <span class="b-gld badge">${g.member_count}</span>${g.strict_topn ? (' | Top-N: <span class="b-gld badge">'+g.strict_topn_n+'</span>') : ''}
-      ${reason}
-    </div>`;
-  }
-
-  let simHtml='';
-  if(g.sim_win_ratio!=null){
-    const pct=g.sim_win_ratio*100;
-    const cls=pct>=66?'pos':pct>=33?'neu':'neg';
-    const badge=`<span class="${cls}" style="font-weight:700">${pct.toFixed(1)}%</span>`;
-    simHtml=`<div style="margin-bottom:0.8rem;padding:0.5rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.82rem">
-      <strong style="color:var(--gold)">🎲 Kampfsimulation:</strong> Sieg-Wahrscheinlichkeit ${badge}<br>
-      ${g.sim_mushrooms?`Pilzkatapult: <span class="b-gld badge">${g.sim_mushrooms} 🍄</span> | `:''}${g.sim_iterations} simulierte Kämpfe | Stand: ${esc(g.sim_evaluated_at||'')}
-    </div>`;
-  }
-
-  const rows=g.members.sort((a,b)=>b.level-a.level).map(m=>
-    `<tr><td>${esc(m.name)}</td><td>${m.level} ${levelBar(m.level,maxLvl)}</td></tr>`
-  ).join('');
-
-  $('mBody').innerHTML=`
-    <div class="stats">
-      <div class="stat"><div class="v">${g.member_count}</div><div class="l">Mitglieder</div></div>
-      <div class="stat"><div class="v">${g.max_level}</div><div class="l">Max Level</div></div>
-      <div class="stat"><div class="v">${g.min_level}</div><div class="l">Min Level</div></div>
-      <div class="stat"><div class="v">${fmt1((g.member_count>0)?(g.total_level/g.member_count):0)}</div><div class="l">Ø Level</div></div>
-      <div class="stat"><div class="v">#${g.rank}</div><div class="l">Rang</div></div>
-      <div class="stat"><div class="v">${g.honor.toLocaleString('de')}</div><div class="l">Ehre</div></div>
-    </div>
-    ${cmp}
-    ${strictHtml}
-    ${simHtml}
-    <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Level</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-}
-
-// ── LOGOUT ─────────────────────────────────────────────────
-async function doLogout(){
-  await api('logout',{});
-  $('headerLogoutBtn').classList.add('hidden');
-  $('headerSwitchBtn').classList.add('hidden');
-  location.reload();
-}
-
-function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
-
-// ── VERSION ────────────────────────────────────────────────
-(async function(){
-  try{
-    const r=await api('version');
-    if(r.success && r.data){
-      $('appVersion').textContent=`v${r.data}`;
-      document.title=`⚔️ SF Gilden-Scanner v${r.data}`;
-    }
-  }catch(e){/* Version ist rein kosmetisch, kein Fehler nötig */}
-})();
-
-(function(){
-  const sm=$('strictMode');
-  const st=$('strictTopN');
-  if(sm && st){
-    const sync=()=>{st.disabled=!sm.checked; st.parentElement.style.opacity=sm.checked?'1':'0.5';};
-    sm.addEventListener('change', sync);
-    sync();
-  }
-})();
-
-setStep(1);
-</script>
+<script src="js/i18n.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>
