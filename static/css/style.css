@@ -58,8 +58,11 @@ body {
 .nbtn .badge { margin-left: auto; font-size: 0.72rem; background: #000a; border: 1px solid var(--line-soft); border-radius: 10px; padding: 0 0.45rem; color: var(--gold); }
 .nbtn.danger:hover { border-color: var(--bad); color: var(--bad); }
 
-.who { font-size: 0.8rem; color: var(--muted); text-align: center; padding-top: 0.3rem; }
+.who { font-size: 0.8rem; color: var(--muted); text-align: center; line-height: 1.5; padding: 0 0.2rem 0.8rem; margin-top: -0.4rem; border-bottom: 1px solid var(--line-soft); }
+.who:empty { display: none; }
 .who b { color: var(--txt); font-weight: 600; }
+.who .chr { color: var(--gold); font-weight: 600; }
+.who .gld { color: var(--accent); }
 
 .main { padding: 1.4rem 1.6rem 3rem; max-width: 1180px; width: 100%; min-width: 0; }
 .page { display: none; }
@@ -211,11 +214,13 @@ th .arrow { font-size: 0.7rem; opacity: 0.7; }
 .dim td { opacity: 0.55; }
 
 .icon.mush { width: 1em; height: 1em; vertical-align: -0.15em; color: var(--gold); }
-.simbar.sticky { position: sticky; top: 0; z-index: 12; background: var(--panel); padding: 0.5rem 0; border-bottom: 1px solid var(--line-soft); }
+.stickyhead { position: sticky; top: 0; z-index: 12; background: var(--panel); padding: 0.1rem 0 0.4rem; border-bottom: 1px solid var(--line-soft); margin-bottom: 0.4rem; }
+.stickyhead .simbar { margin: 0.4rem 0; }
+.stickyhead .simMsg { margin-top: 0.3rem; }
 .rowact { display: inline-flex; gap: 0.3rem; align-items: center; }
 .rowact select { width: auto; padding: 0.2rem 0.3rem; font-size: 0.8rem; }
 .btn.small .icon { width: 0.9em; height: 0.9em; }
-@media (max-width: 860px) { .simbar.sticky { top: 2.9rem; } }
+@media (max-width: 860px) { .stickyhead { top: 2.9rem; } }
 
 .colmenu { position: relative; }
 .colmenu .menu {
@@ -225,3 +230,5 @@ th .arrow { font-size: 0.7rem; opacity: 0.7; }
 }
 .colhide { display: none; }
 .partInfo a { color: var(--gold); }
+
+.rowbtns { display: inline-flex; gap: 0.3rem; }

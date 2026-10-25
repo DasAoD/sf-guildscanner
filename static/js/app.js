@@ -6,12 +6,15 @@ let sortKey='rank', sortDir='asc';
 let hofResults=[];
 let hofSortKey='rank', hofSortDir='asc';
 let hasScanData=false, scanDate='';
-// Namen der per Checkbox ausgewählten Gilden — bleibt über renderTable()-
-// Neuaufbauten hinweg bestehen (z.B. nach applyFilter() nach Simulationsende),
-// damit die Häkchen nicht bei jedem Neurendern verschwinden.
-let selectedGuilds=new Set();
+// Namen der per Checkbox ausgewählten Gilden, getrennt je Tabelle (Ergebnisse =
+// rBody, Ehrenhalle = hofBody). Bleibt über renderTable()-Neuaufbauten bestehen
+// (z.B. nach applyFilter() nach Simulationsende), damit die Häkchen nicht bei
+// jedem Neurendern verschwinden.
+let selected={rBody:new Set(),hofBody:new Set()};
 
-const PAGES=['overview','scan','results','hof','settings','help'];
+const PAGES=['character','overview','scan','results','hof','users','settings','help'];
+// Seiten, die einen gewählten Charakter (und damit eine Gilde) brauchen
+const NEEDS_GUILD=['overview','scan','results','hof'];
 const MUSH_ICON='<svg class="icon mush"><use href="#i-mush"/></svg>';
 let lastMushrooms='0';
 
@@ -20,23 +23,40 @@ function rowActionsHtml(name){
   const opts=[0,1,2,3].map(n=>`<option value="${n}"${String(n)===lastMushrooms?' selected':''}>${n}</option>`).join('');
   return `<span class="rowact"><select class="rowMush" title="Pilze im Katapult">${opts}</select><button class="btn sec small" type="button" data-g="${esc(name)}" onclick="doSimulateRow(this)" title="Nur diese Gilde mit der gewählten Pilzzahl simulieren"><svg class="icon"><use href="#i-play"/></svg>Sim</button></span>`;
 }
-let view='login';
+let view='boot';
 
 document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=t(el.dataset.i18n);});
 
 // ── ANSICHTEN / NAVIGATION ─────────────────────────────────
 function route(){
-  $('loginView').classList.toggle('hidden',view!=='login');
-  $('charsView').classList.toggle('hidden',view!=='chars');
+  $('authView').classList.toggle('hidden',view!=='auth');
   $('appView').classList.toggle('hidden',view!=='app');
   if(view!=='app')return;
   let page=(location.hash||'#overview').slice(1);
   if(!PAGES.includes(page))page='overview';
+  if(page==='users'&&!(authUser&&authUser.is_admin))page='character';
+  if(NEEDS_GUILD.includes(page)&&!ownGuild)page='character';
   document.querySelectorAll('.page').forEach(p=>p.classList.toggle('show',p.id==='p-'+page));
   document.querySelectorAll('.nbtn[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===page));
   $('side').classList.remove('open');
+  if(page==='users')loadUsers();
+  if(page==='character')loadCharacterPage();
   window.scrollTo(0,0);
 }
+function hostOf(url){
+  try{return new URL(url).hostname;}catch(e){return url;}
+}
+
+// Angemeldeter Benutzer, aktiver Charakter und Gilde oben in der Seitenleiste
+function updateWho(){
+  if(!authUser){$('who').textContent=''; return;}
+  let html=`Angemeldet als <b>${esc(authUser.name)}</b>${authUser.is_admin?' (Admin)':''}`;
+  if(activeChar&&ownGuild){
+    html+=`<br><span class="chr" title="${esc(activeChar.server)}">${esc(activeChar.name)}</span> <span class="gld">${esc(ownGuild.name)}</span>`;
+  }
+  $('who').innerHTML=html;
+}
+
 function goPage(page){
   if(location.hash==='#'+page)route(); else location.hash='#'+page;
 }
@@ -48,6 +68,7 @@ async function api(ep,data){
     ?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})}
     :{};
   const r=await fetch('/api/'+ep,opts);
+  if(r.status===401&&ep!=='auth/login'){showAuth('login');return {success:false,error:'Nicht angemeldet'};}
   return r.json();
 }
 
@@ -68,8 +89,30 @@ async function doLogin(){
 $('pass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 
 // ── CHARACTER ──────────────────────────────────────────────
+function showSso(){
+  $('ssoCard').classList.remove('hidden');
+  $('charCard').classList.add('hidden');
+}
+
+// Zeigt die Charakterliste, falls ein S&F-Login besteht, sonst das Anmeldeformular
+async function loadCharacterPage(){
+  try{
+    const st=await api('status');
+    if(st.success&&st.data.logged_in){
+      const r=await api('characters');
+      if(r.success){showChars(r.data);return;}
+    }
+  }catch(e){/* ohne Antwort bleibt das Anmeldeformular */}
+  showSso();
+}
+
+let activeChar=null;
+let charsList=[];
+
 function showChars(chars){
-  view='chars'; route();
+  charsList=chars;
+  $('ssoCard').classList.add('hidden');
+  $('charCard').classList.remove('hidden');
   const l=$('charList'); l.innerHTML='';
   chars.forEach(c=>{
     const b=document.createElement('button');
@@ -81,7 +124,7 @@ function showChars(chars){
 }
 
 function resetResults(){
-  results=[]; hofResults=[]; selectedGuilds=new Set();
+  results=[]; hofResults=[]; selected={rBody:new Set(),hofBody:new Set()};
   hasScanData=false; scanDate='';
   $('lastScanLoad').classList.add('hidden');
   $('lastScanInfo').textContent='Noch kein Scan für diesen Charakter.';
@@ -115,23 +158,14 @@ async function selectChar(idx){
   try{
     const r=await api('select-character',{index:idx});
     if(!r.success){alert(r.error);return;}
+    const c=charsList.find(x=>x.index===idx);
+    activeChar=c?{name:c.name,server:hostOf(c.server)}:null;
     showGuild(r.data);
-    view='app'; location.hash='#overview'; route();
+    goPage('overview');
     const st=await api('status');
     applyScanStatus(st.data);
   }catch(e){alert('Fehler: '+e.message);}
   finally{$('charList').querySelectorAll('button').forEach(b=>b.disabled=false);}
-}
-
-// Wechselt zu einem anderen Charakter auf demselben SSO-Account, ohne
-// sich neu einzuloggen (alle Charaktere sind schon aus dem Login bekannt).
-async function doSwitchCharacter(){
-  try{
-    const r=await api('characters');
-    if(!r.success){alert(r.error);return;}
-    $('modal').classList.add('hidden');
-    showChars(r.data);
-  }catch(e){alert('Fehler: '+e.message);}
 }
 
 // ── TEILNAHME AN DER SIMULATION ────────────────────────────
@@ -214,7 +248,7 @@ function showGuild(g){
   ownGuild=g;
   $('guildName').textContent=g.name;
   $('ovSub').textContent=`Rang #${g.rank}`;
-  $('who').textContent=g.name;
+  updateWho();
 
   const ownMax=Math.max(...g.members.map(m=>m.level));
   const ownMin=Math.min(...g.members.map(m=>m.level));
@@ -391,7 +425,7 @@ function renderTable(){
     const strictBadge=g.strict_evaluated?(g.strict_beatable?'<span class="badge b-grn">✓ Strikt</span>':'<span class="badge b-red">✗ Strikt</span>'):'';
 
     tr.innerHTML=`
-      <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" ${selectedGuilds.has(g.name)?'checked':''} onchange="toggleGuildSelection(this)"></td>
+      <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" ${selected.rBody.has(g.name)?'checked':''} onchange="toggleGuildSelection(this)"></td>
       <td class="name">${esc(g.name)}</td>
       <td class="num ${memberCls}">${g.member_count}</td>
       <td class="num ${maxCls}">${g.max_level}</td>
@@ -455,7 +489,7 @@ function renderHofTable(){
     const tr=document.createElement('tr');
     const atkBadge=g.attackable?'<span class="badge b-grn">✓ Ja</span>':'<span class="badge b-red">✗ Nein</span>';
     tr.innerHTML=`
-      <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" ${selectedGuilds.has(g.name)?'checked':''} onchange="toggleGuildSelection(this)"></td>
+      <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" ${selected.hofBody.has(g.name)?'checked':''} onchange="toggleGuildSelection(this)"></td>
       <td class="num">#${g.rank}</td>
       <td class="name">${esc(g.name)}</td>
       <td class="num">${g.member_count}</td>
@@ -471,60 +505,36 @@ function renderHofTable(){
 }
 
 // ── CHECKBOX SELECTION ─────────────────────────────────────
-// selectedGuilds ist die eigentliche Quelle der Wahrheit für die Auswahl
-// (übersteht renderTable()-Neuaufbauten, z.B. nach einer Simulation); die
-// Checkbox-Elemente selbst sind nur die aktuelle visuelle Darstellung davon.
+// Jede Tabelle (Ergebnisse `rBody`, Vollständige Ehrenhalle `hofBody`) hat ihre
+// eigene Auswahl. Eine Gilde, die in beiden Tabellen steht, wird so nur dort
+// simuliert, wo sie angehakt wurde. `selected` übersteht Neuaufbauten der
+// Tabelle (z.B. nach einer Simulation); die Checkboxen sind nur die Darstellung.
+function scopeOf(cb){return cb.closest('tbody').id;}
+
 function toggleGuildSelection(cb){
-  if(cb.checked) selectedGuilds.add(cb.dataset.name);
-  else selectedGuilds.delete(cb.dataset.name);
+  const set=selected[scopeOf(cb)];
+  if(cb.checked) set.add(cb.dataset.name); else set.delete(cb.dataset.name);
   updateSelInfo();
 }
 
-// Es gibt zwei Tabellen mit eigenen Checkboxen (Ergebnisse + Vollständige
-// Ehrenhalle), die sich denselben selectedGuilds-Auswahltopf teilen — aber
-// "Alle auswählen"/"Auswahl aufheben" sollen nur die jeweils EIGENE Tabelle
-// betreffen, nicht beide gleichzeitig. Deshalb hier per tbody-Id skopiert.
-function scopeEl(scopeId){
-  return scopeId ? $(scopeId) : document;
-}
-
-function toggleAll(cb, scopeId){
-  scopeEl(scopeId).querySelectorAll('.gsel').forEach(c=>{
-    c.checked=cb.checked;
-    if(cb.checked) selectedGuilds.add(c.dataset.name);
-    else selectedGuilds.delete(c.dataset.name);
+function setScope(scopeId,on){
+  $(scopeId).querySelectorAll('.gsel').forEach(c=>{
+    c.checked=on;
+    if(on) selected[scopeId].add(c.dataset.name); else selected[scopeId].delete(c.dataset.name);
   });
   updateSelInfo();
 }
+function toggleAll(cb,scopeId){setScope(scopeId,cb.checked);}
+function selectAllVisible(scopeId){setScope(scopeId,true);}
+function deselectAll(scopeId){setScope(scopeId,false);}
 
-function selectAllVisible(scopeId){
-  scopeEl(scopeId).querySelectorAll('.gsel').forEach(c=>{
-    c.checked=true;
-    selectedGuilds.add(c.dataset.name);
-  });
-  updateSelInfo();
-}
-
-function deselectAll(scopeId){
-  scopeEl(scopeId).querySelectorAll('.gsel').forEach(c=>{
-    c.checked=false;
-    selectedGuilds.delete(c.dataset.name);
-  });
-  updateSelInfo();
-}
-
-// Zähler-Text ist bewusst über beide Tabellen kombiniert (zeigt die
-// gesamte Simulations-Warteschlange); die Header-Checkbox jeder Tabelle
-// spiegelt aber nur den Zustand ihrer EIGENEN Zeilen.
 function updateSelInfo(){
-  const total=document.querySelectorAll('.gsel').length;
-  const checked=document.querySelectorAll('.gsel:checked').length;
-  const text=`${checked} von ${total} Gilden ausgewählt`;
-  $('selInfo').textContent=text;
-  const hofInfo=$('selInfoHof'); if(hofInfo) hofInfo.textContent=text;
-
-  syncSelectAllCheckbox('rBody','selAll');
-  syncSelectAllCheckbox('hofBody','selAllHof');
+  [['rBody','selInfo','selAll'],['hofBody','selInfoHof','selAllHof']].forEach(([scope,infoId,allId])=>{
+    const total=$(scope).querySelectorAll('.gsel').length;
+    const checked=$(scope).querySelectorAll('.gsel:checked').length;
+    $(infoId).textContent=`${checked} von ${total} Gilden ausgewählt`;
+    syncSelectAllCheckbox(scope,allId);
+  });
 }
 
 function syncSelectAllCheckbox(scopeId, checkboxId){
@@ -544,7 +554,7 @@ function syncSelectAllCheckbox(scopeId, checkboxId){
 
 // ── TXT EXPORT ─────────────────────────────────────────────
 function exportTxt(){
-  const checked=[...document.querySelectorAll('.gsel:checked')].map(c=>c.dataset.name);
+  const checked=[...$('rBody').querySelectorAll('.gsel:checked')].map(c=>c.dataset.name);
   if(!checked.length){
     alert('Keine Gilden ausgewählt.\nBitte zuerst die gewünschten Gilden per Checkbox markieren.');
     return;
@@ -572,7 +582,9 @@ async function doRefreshOwnFighters(){
 }
 
 async function doSimulate(mushroomSelectId){
-  const checked=[...document.querySelectorAll('.gsel:checked')].map(c=>c.dataset.name);
+  // Nur die Gilden der Tabelle, von der aus gestartet wurde
+  const scope=mushroomSelectId==='simMushroomsHof'?'hofBody':'rBody';
+  const checked=[...$(scope).querySelectorAll('.gsel:checked')].map(c=>c.dataset.name);
   if(!checked.length){
     alert('Keine Gilden ausgewählt.\nBitte zuerst die gewünschten Gilden per Checkbox markieren.');
     return;
@@ -729,7 +741,7 @@ function renderDetail(g){
 
 // ── LOGOUT ─────────────────────────────────────────────────
 async function doLogout(){
-  await api('logout',{});
+  await api('auth/logout',{});
   location.reload();
 }
 
@@ -783,26 +795,123 @@ async function checkUpdate(){
       :'Die neueste Version konnte noch nicht ermittelt werden.';
   }catch(e){/* ohne Netz bleibt der Hinweis einfach aus */}
 }
-loadSettings(); checkUpdate(); setInterval(checkUpdate,30*60*1000);
+
+// ── ANMELDUNG AM SCANNER ───────────────────────────────────
+let authUser=null, authMode='login', appStarted=false;
+
+function showAuth(mode){
+  authMode=mode;
+  authUser=null;
+  $('authPass2Field').classList.toggle('hidden',mode!=='setup');
+  $('authIntro').textContent=mode==='setup'
+    ?'Willkommen! Lege den ersten Benutzer an. Er wird Admin und kann danach weitere Benutzer anlegen.'
+    :'';
+  $('authBtn').textContent=mode==='setup'?'Admin anlegen':'Anmelden';
+  $('authPass').autocomplete=mode==='setup'?'new-password':'current-password';
+  $('authErr').textContent='';
+  view='auth'; route();
+}
+
+async function doAuth(){
+  const name=$('authName').value.trim(), pass=$('authPass').value;
+  if(!name||!pass)return;
+  if(authMode==='setup'&&pass!==$('authPass2').value){$('authErr').textContent='Die Passwörter stimmen nicht überein';return;}
+  $('authBtn').disabled=true; $('authErr').textContent='';
+  try{
+    const r=await api(authMode==='setup'?'auth/setup':'auth/login',{name,password:pass});
+    if(!r.success){$('authErr').textContent=r.error;return;}
+    $('authPass').value=''; $('authPass2').value='';
+    enterApp(r.data);
+  }catch(e){$('authErr').textContent='Verbindungsfehler';}
+  finally{$('authBtn').disabled=false;}
+}
+$('authPass').addEventListener('keydown',e=>{if(e.key==='Enter'&&authMode==='login')doAuth();});
+$('authPass2').addEventListener('keydown',e=>{if(e.key==='Enter')doAuth();});
+
+function enterApp(user){
+  authUser=user;
+  updateWho();
+  $('navUsers').classList.toggle('hidden',!user.is_admin);
+  $('setUpdate').disabled=!user.is_admin;
+  loadSettings(); checkUpdate();
+  if(!appStarted){appStarted=true; setInterval(checkUpdate,30*60*1000);}
+  restore();
+}
+
+async function boot(){
+  try{
+    const r=await api('auth/state');
+    if(!r.success){showAuth('login');return;}
+    if(r.data.setup_needed){showAuth('setup');return;}
+    if(!r.data.user){showAuth('login');return;}
+    enterApp(r.data.user);
+  }catch(e){showAuth('login');}
+}
+
+// ── BENUTZERVERWALTUNG (Admin) ─────────────────────────────
+async function loadUsers(){
+  const r=await api('admin/users');
+  if(!r.success)return;
+  const tb=$('usersTable').querySelector('tbody'); tb.innerHTML='';
+  r.data.forEach(u=>{
+    const tr=document.createElement('tr');
+    const self=authUser&&u.id===authUser.id;
+    tr.innerHTML=`<td class="name">${esc(u.name)}${self?' <span class="hint">(du)</span>':''}</td>
+      <td>${u.is_admin?'<span class="badge b-gld">Admin</span>':'Benutzer'}</td>
+      <td>${esc(u.created)}</td>
+      <td><span class="rowbtns"><button class="btn sec small" type="button" data-id="${esc(u.id)}" data-name="${esc(u.name)}" onclick="openPwModal(this.dataset.id,this.dataset.name)">Passwort setzen</button>${self?'':`<button class="btn red small" type="button" data-id="${esc(u.id)}" data-name="${esc(u.name)}" onclick="deleteUser(this.dataset.id,this.dataset.name)">Löschen</button>`}</span></td>`;
+    tb.appendChild(tr);
+  });
+}
+
+async function createUser(){
+  const name=$('newUserName').value.trim(), password=$('newUserPass').value;
+  const r=await api('admin/users',{name,password,is_admin:$('newUserAdmin').checked});
+  $('newUserMsg').textContent=r.success?`Benutzer "${r.data.name}" angelegt.`:'Fehler: '+r.error;
+  if(r.success){$('newUserName').value=''; $('newUserPass').value=''; $('newUserAdmin').checked=false; loadUsers();}
+}
+
+async function deleteUser(id,name){
+  if(!confirm(`Benutzer "${name}" samt allen Scan-Daten löschen?`))return;
+  const r=await api('admin/users/delete',{id});
+  if(!r.success)alert(r.error);
+  loadUsers();
+}
+
+function openPwModal(id,name){
+  $('mTitle').textContent=`Passwort setzen: ${name}`;
+  $('mBody').innerHTML=`<div class="form" style="grid-template-columns:1fr"><div class="field"><label for="admPw">Neues Passwort</label><input type="password" id="admPw" autocomplete="new-password"></div></div>
+    <button class="btn" type="button" id="admPwBtn">Setzen</button> <span class="hint" id="admPwMsg">Mindestens 10 Zeichen. Alle Sitzungen des Benutzers enden.</span>`;
+  $('modal').classList.remove('hidden');
+  $('admPwBtn').onclick=async()=>{
+    const r=await api('admin/users/password',{id,password:$('admPw').value});
+    $('admPwMsg').textContent=r.success?'Passwort gesetzt.':'Fehler: '+r.error;
+    if(r.success)setTimeout(()=>$('modal').classList.add('hidden'),900);
+  };
+}
+
+async function changePassword(){
+  if($('pwNew').value!==$('pwNew2').value){$('pwMsg').textContent='Die neuen Passwörter stimmen nicht überein';return;}
+  const r=await api('auth/password',{old:$('pwOld').value,new:$('pwNew').value});
+  $('pwMsg').textContent=r.success?'Passwort geändert.':'Fehler: '+r.error;
+  if(r.success){$('pwOld').value=''; $('pwNew').value=''; $('pwNew2').value='';}
+}
 
 initColMenus();
 
 // Nach einem Seiten-Refresh hält der Server die Sitzung noch: Zustand
 // wiederherstellen statt wieder den Login zu zeigen.
-(async function restore(){
+async function restore(){
   let st;
   try{
     st=await api('status');
-    if(!st.success||!st.data.logged_in)return;
-    if(!(st.data.guild_loaded&&st.data.own_guild)){
-      const r=await api('characters');
-      if(r.success)showChars(r.data);
-      return;
-    }
+    if(!st.success||!st.data.logged_in){view='app'; goPage('character'); return;}
+    if(!(st.data.guild_loaded&&st.data.own_guild)){view='app'; goPage('character'); return;}
+    activeChar=st.data.character_name?{name:st.data.character_name,server:st.data.character_server||''}:null;
     showGuild(st.data.own_guild);
     view='app'; route();
     applyScanStatus(st.data);
-  }catch(e){console.error('Wiederherstellung fehlgeschlagen',e);return;}
+  }catch(e){console.error('Wiederherstellung fehlgeschlagen',e); view='app'; goPage('character'); return;}
 
   try{
     if(st.data.has_scan_data)await applyFilter();
@@ -819,6 +928,7 @@ initColMenus();
       pollSimProgress();
     }
   }catch(e){console.error('Laufende Aufgaben konnten nicht wiederhergestellt werden',e);}
-})();
+}
 
 route();
+boot();

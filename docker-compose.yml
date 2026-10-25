@@ -10,4 +10,6 @@ services:
       - ./data:/app/data
     environment:
       - RUST_LOG=info
+      # true, wenn der Scanner hinter einem eigenen HTTPS-Reverse-Proxy steht
+      - SFGS_TRUST_PROXY=false
     restart: unless-stopped
