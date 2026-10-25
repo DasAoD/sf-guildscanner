@@ -6,10 +6,11 @@ let sortKey='rank', sortDir='asc';
 let hofResults=[];
 let hofSortKey='rank', hofSortDir='asc';
 let hasScanData=false, scanDate='';
-// Namen der per Checkbox ausgewählten Gilden — bleibt über renderTable()-
-// Neuaufbauten hinweg bestehen (z.B. nach applyFilter() nach Simulationsende),
-// damit die Häkchen nicht bei jedem Neurendern verschwinden.
-let selectedGuilds=new Set();
+// Namen der per Checkbox ausgewählten Gilden, getrennt je Tabelle (Ergebnisse =
+// rBody, Ehrenhalle = hofBody). Bleibt über renderTable()-Neuaufbauten bestehen
+// (z.B. nach applyFilter() nach Simulationsende), damit die Häkchen nicht bei
+// jedem Neurendern verschwinden.
+let selected={rBody:new Set(),hofBody:new Set()};
 
 const PAGES=['character','overview','scan','results','hof','users','settings','help'];
 // Seiten, die einen gewählten Charakter (und damit eine Gilde) brauchen
@@ -42,6 +43,13 @@ function route(){
   if(page==='character')loadCharacterPage();
   window.scrollTo(0,0);
 }
+// Angemeldeter Benutzer (und Gilde) unten in der Seitenleiste
+function updateWho(){
+  if(!authUser){$('who').textContent=''; return;}
+  const guild=ownGuild?`<br>${esc(ownGuild.name)}`:'';
+  $('who').innerHTML=`Angemeldet als <b>${esc(authUser.name)}</b>${authUser.is_admin?' (Admin)':''}${guild}`;
+}
+
 function goPage(page){
   if(location.hash==='#'+page)route(); else location.hash='#'+page;
 }
@@ -105,7 +113,7 @@ function showChars(chars){
 }
 
 function resetResults(){
-  results=[]; hofResults=[]; selectedGuilds=new Set();
+  results=[]; hofResults=[]; selected={rBody:new Set(),hofBody:new Set()};
   hasScanData=false; scanDate='';
   $('lastScanLoad').classList.add('hidden');
   $('lastScanInfo').textContent='Noch kein Scan für diesen Charakter.';
@@ -227,7 +235,7 @@ function showGuild(g){
   ownGuild=g;
   $('guildName').textContent=g.name;
   $('ovSub').textContent=`Rang #${g.rank}`;
-  $('who').textContent=(authUser?authUser.name+' · ':'')+g.name;
+  updateWho();
 
   const ownMax=Math.max(...g.members.map(m=>m.level));
   const ownMin=Math.min(...g.members.map(m=>m.level));
@@ -404,7 +412,7 @@ function renderTable(){
     const strictBadge=g.strict_evaluated?(g.strict_beatable?'<span class="badge b-grn">✓ Strikt</span>':'<span class="badge b-red">✗ Strikt</span>'):'';
 
     tr.innerHTML=`
-      <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" ${selectedGuilds.has(g.name)?'checked':''} onchange="toggleGuildSelection(this)"></td>
+      <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" ${selected.rBody.has(g.name)?'checked':''} onchange="toggleGuildSelection(this)"></td>
       <td class="name">${esc(g.name)}</td>
       <td class="num ${memberCls}">${g.member_count}</td>
       <td class="num ${maxCls}">${g.max_level}</td>
@@ -468,7 +476,7 @@ function renderHofTable(){
     const tr=document.createElement('tr');
     const atkBadge=g.attackable?'<span class="badge b-grn">✓ Ja</span>':'<span class="badge b-red">✗ Nein</span>';
     tr.innerHTML=`
-      <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" ${selectedGuilds.has(g.name)?'checked':''} onchange="toggleGuildSelection(this)"></td>
+      <td><input type="checkbox" class="gsel" data-name="${esc(g.name)}" ${selected.hofBody.has(g.name)?'checked':''} onchange="toggleGuildSelection(this)"></td>
       <td class="num">#${g.rank}</td>
       <td class="name">${esc(g.name)}</td>
       <td class="num">${g.member_count}</td>
@@ -484,60 +492,36 @@ function renderHofTable(){
 }
 
 // ── CHECKBOX SELECTION ─────────────────────────────────────
-// selectedGuilds ist die eigentliche Quelle der Wahrheit für die Auswahl
-// (übersteht renderTable()-Neuaufbauten, z.B. nach einer Simulation); die
-// Checkbox-Elemente selbst sind nur die aktuelle visuelle Darstellung davon.
+// Jede Tabelle (Ergebnisse `rBody`, Vollständige Ehrenhalle `hofBody`) hat ihre
+// eigene Auswahl. Eine Gilde, die in beiden Tabellen steht, wird so nur dort
+// simuliert, wo sie angehakt wurde. `selected` übersteht Neuaufbauten der
+// Tabelle (z.B. nach einer Simulation); die Checkboxen sind nur die Darstellung.
+function scopeOf(cb){return cb.closest('tbody').id;}
+
 function toggleGuildSelection(cb){
-  if(cb.checked) selectedGuilds.add(cb.dataset.name);
-  else selectedGuilds.delete(cb.dataset.name);
+  const set=selected[scopeOf(cb)];
+  if(cb.checked) set.add(cb.dataset.name); else set.delete(cb.dataset.name);
   updateSelInfo();
 }
 
-// Es gibt zwei Tabellen mit eigenen Checkboxen (Ergebnisse + Vollständige
-// Ehrenhalle), die sich denselben selectedGuilds-Auswahltopf teilen — aber
-// "Alle auswählen"/"Auswahl aufheben" sollen nur die jeweils EIGENE Tabelle
-// betreffen, nicht beide gleichzeitig. Deshalb hier per tbody-Id skopiert.
-function scopeEl(scopeId){
-  return scopeId ? $(scopeId) : document;
-}
-
-function toggleAll(cb, scopeId){
-  scopeEl(scopeId).querySelectorAll('.gsel').forEach(c=>{
-    c.checked=cb.checked;
-    if(cb.checked) selectedGuilds.add(c.dataset.name);
-    else selectedGuilds.delete(c.dataset.name);
+function setScope(scopeId,on){
+  $(scopeId).querySelectorAll('.gsel').forEach(c=>{
+    c.checked=on;
+    if(on) selected[scopeId].add(c.dataset.name); else selected[scopeId].delete(c.dataset.name);
   });
   updateSelInfo();
 }
+function toggleAll(cb,scopeId){setScope(scopeId,cb.checked);}
+function selectAllVisible(scopeId){setScope(scopeId,true);}
+function deselectAll(scopeId){setScope(scopeId,false);}
 
-function selectAllVisible(scopeId){
-  scopeEl(scopeId).querySelectorAll('.gsel').forEach(c=>{
-    c.checked=true;
-    selectedGuilds.add(c.dataset.name);
-  });
-  updateSelInfo();
-}
-
-function deselectAll(scopeId){
-  scopeEl(scopeId).querySelectorAll('.gsel').forEach(c=>{
-    c.checked=false;
-    selectedGuilds.delete(c.dataset.name);
-  });
-  updateSelInfo();
-}
-
-// Zähler-Text ist bewusst über beide Tabellen kombiniert (zeigt die
-// gesamte Simulations-Warteschlange); die Header-Checkbox jeder Tabelle
-// spiegelt aber nur den Zustand ihrer EIGENEN Zeilen.
 function updateSelInfo(){
-  const total=document.querySelectorAll('.gsel').length;
-  const checked=document.querySelectorAll('.gsel:checked').length;
-  const text=`${checked} von ${total} Gilden ausgewählt`;
-  $('selInfo').textContent=text;
-  const hofInfo=$('selInfoHof'); if(hofInfo) hofInfo.textContent=text;
-
-  syncSelectAllCheckbox('rBody','selAll');
-  syncSelectAllCheckbox('hofBody','selAllHof');
+  [['rBody','selInfo','selAll'],['hofBody','selInfoHof','selAllHof']].forEach(([scope,infoId,allId])=>{
+    const total=$(scope).querySelectorAll('.gsel').length;
+    const checked=$(scope).querySelectorAll('.gsel:checked').length;
+    $(infoId).textContent=`${checked} von ${total} Gilden ausgewählt`;
+    syncSelectAllCheckbox(scope,allId);
+  });
 }
 
 function syncSelectAllCheckbox(scopeId, checkboxId){
@@ -557,7 +541,7 @@ function syncSelectAllCheckbox(scopeId, checkboxId){
 
 // ── TXT EXPORT ─────────────────────────────────────────────
 function exportTxt(){
-  const checked=[...document.querySelectorAll('.gsel:checked')].map(c=>c.dataset.name);
+  const checked=[...$('rBody').querySelectorAll('.gsel:checked')].map(c=>c.dataset.name);
   if(!checked.length){
     alert('Keine Gilden ausgewählt.\nBitte zuerst die gewünschten Gilden per Checkbox markieren.');
     return;
@@ -585,7 +569,9 @@ async function doRefreshOwnFighters(){
 }
 
 async function doSimulate(mushroomSelectId){
-  const checked=[...document.querySelectorAll('.gsel:checked')].map(c=>c.dataset.name);
+  // Nur die Gilden der Tabelle, von der aus gestartet wurde
+  const scope=mushroomSelectId==='simMushroomsHof'?'hofBody':'rBody';
+  const checked=[...$(scope).querySelectorAll('.gsel:checked')].map(c=>c.dataset.name);
   if(!checked.length){
     alert('Keine Gilden ausgewählt.\nBitte zuerst die gewünschten Gilden per Checkbox markieren.');
     return;
@@ -831,7 +817,7 @@ $('authPass2').addEventListener('keydown',e=>{if(e.key==='Enter')doAuth();});
 
 function enterApp(user){
   authUser=user;
-  $('who').textContent=user.name;
+  updateWho();
   $('navUsers').classList.toggle('hidden',!user.is_admin);
   $('setUpdate').disabled=!user.is_admin;
   loadSettings(); checkUpdate();
