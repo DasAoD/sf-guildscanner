@@ -1540,7 +1540,7 @@ async fn get_own_fighters(state: &SharedState) -> Result<Vec<Fighter>, String> {
     // Wir selbst: frisches Update, kostenlos aus dem GameState (kein ViewPlayer
     // nötig). Nur wenn wir selbst kampfbereit sind, sonst kämpfen wir nicht mit.
     let mut fighters: Vec<Fighter> = Vec::new();
-    if active_names.iter().any(|n| *n == own_name) {
+    if active_names.contains(&own_name) {
         let mut app = state.lock().await;
         let session = &mut app.sessions[idx];
         let gs = session
