@@ -75,7 +75,6 @@ function showChars(chars){
 function resetResults(){
   results=[]; hofResults=[]; selectedGuilds=new Set();
   hasScanData=false; scanDate='';
-  $('scanExisting').classList.add('hidden');
   $('lastScanLoad').classList.add('hidden');
   $('lastScanInfo').textContent='Noch kein Scan für diesen Charakter.';
   $('resContent').classList.add('hidden'); $('resEmpty').classList.remove('hidden');
@@ -93,6 +92,13 @@ function resetResults(){
 // beide werden gemeinsam bedient.
 function simUi(fn,cls){document.querySelectorAll('.'+cls).forEach(fn);}
 
+function applyScanStatus(st){
+  if(!st?.has_scan_data)return;
+  hasScanData=true; scanDate=st.scan_date||'';
+  $('lastScanInfo').textContent=`vom ${scanDate}`;
+  $('lastScanLoad').classList.remove('hidden');
+}
+
 async function selectChar(idx){
   $('charList').querySelectorAll('button').forEach(b=>b.disabled=true);
   // Stand eines evtl. vorher gewählten Charakters (bei Charakterwechsel)
@@ -104,13 +110,7 @@ async function selectChar(idx){
     showGuild(r.data);
     view='app'; location.hash='#overview'; route();
     const st=await api('status');
-    if(st.data?.has_scan_data){
-      hasScanData=true; scanDate=st.data.scan_date||'';
-      $('scanDate').textContent=scanDate;
-      $('scanExisting').classList.remove('hidden');
-      $('lastScanInfo').textContent=`Scan vom ${scanDate} vorhanden.`;
-      $('lastScanLoad').classList.remove('hidden');
-    }
+    applyScanStatus(st.data);
   }catch(e){alert('Fehler: '+e.message);}
   finally{$('charList').querySelectorAll('button').forEach(b=>b.disabled=false);}
 }
@@ -150,8 +150,9 @@ function showGuild(g){
   [...g.members].sort((a,b)=>b.level-a.level).forEach(m=>{
     const tr=document.createElement('tr');
     const off=(m.offline_days!=null && m.offline_days>=1)?` <span class="badge b-red" title="offline seit ${m.offline_days} Tagen">off ${m.offline_days}d</span>`:'';
-    const tip=(m.attack_joined===false)?' title="Nicht für den Angriff angemeldet, tritt in der Simulation nicht an"':'';
-    tr.innerHTML=`<td${tip}>${esc(m.name)}${off}</td><td>${m.level} ${levelBar(m.level,ownMax)}</td>`;
+    const ready=(m.is_active_24h!==false)&&(m.attack_joined!==false);
+    tr.className=ready?'':'dim';
+    tr.innerHTML=`<td>${esc(m.name)}${off}</td><td>${m.level} ${levelBar(m.level,ownMax)}</td>`;
     tb.appendChild(tr);
   });
 }
@@ -211,6 +212,7 @@ async function pollProgress(){
       $('scanBtn').disabled=false;
       $('abortBtn').disabled=true;
       await applyFilter();
+      const st=await api('status'); applyScanStatus(st.data);
       $('pMsg').textContent=p.message;
       goPage('results');
       return;
@@ -651,6 +653,40 @@ function esc(s){const d=document.createElement('div');d.textContent=s;return d.i
     sm.addEventListener('change', sync);
     sync();
   }
+})();
+
+// Nach einem Seiten-Refresh hält der Server die Sitzung noch: Zustand
+// wiederherstellen statt wieder den Login zu zeigen.
+(async function restore(){
+  let st;
+  try{
+    st=await api('status');
+    if(!st.success||!st.data.logged_in)return;
+    if(!(st.data.guild_loaded&&st.data.own_guild)){
+      const r=await api('characters');
+      if(r.success)showChars(r.data);
+      return;
+    }
+    showGuild(st.data.own_guild);
+    view='app'; route();
+    applyScanStatus(st.data);
+  }catch(e){console.error('Wiederherstellung fehlgeschlagen',e);return;}
+
+  try{
+    if(st.data.has_scan_data)await applyFilter();
+    const sp=await api('progress');
+    if(sp.data?.running){
+      $('progressArea').classList.remove('hidden');
+      $('scanBtn').disabled=true; $('abortBtn').disabled=false;
+      pollProgress();
+    }
+    const mp=await api('simulate/progress');
+    if(mp.data?.running){
+      simUi(el=>el.classList.remove('hidden'),'simProgress');
+      simUi(el=>{el.disabled=true;},'simBtn'); simUi(el=>{el.disabled=false;},'simAbortBtn');
+      pollSimProgress();
+    }
+  }catch(e){console.error('Laufende Aufgaben konnten nicht wiederhergestellt werden',e);}
 })();
 
 route();

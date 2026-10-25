@@ -89,14 +89,7 @@
         <div class="card">
           <h3>Eure Mitglieder</h3>
           <div class="tablewrap"><table id="ownMembers"><thead><tr><th>Name</th><th>Level</th></tr></thead><tbody></tbody></table></div>
-        </div>
-        <div class="card">
-          <h3>Letzter Scan</h3>
-          <p class="hint" id="lastScanInfo">Noch kein Scan für diesen Charakter.</p>
-          <div class="row" style="margin-top:0.8rem">
-            <a class="btn" href="#scan">Neuen Scan starten</a>
-            <button class="btn sec hidden" id="lastScanLoad" type="button" onclick="loadExisting()">Letzten Scan laden</button>
-          </div>
+          <p class="hint">Ausgegraut: tritt in der Simulation nicht an (nicht für den Angriff angemeldet oder länger als 24 Stunden offline).</p>
         </div>
       </section>
 
@@ -104,6 +97,10 @@
       <section class="page" id="p-scan">
         <div class="page-head"><h2 data-i18n="page.scan"></h2><span class="sub">Scannt um eure Platzierung herum (oben: 20 Ränge, unten: Down-Limit)</span></div>
         <div class="card">
+          <div class="infobox">
+            <strong>Letzter Scan:</strong> <span id="lastScanInfo">Noch kein Scan für diesen Charakter.</span>
+            <button class="btn sec small hidden" id="lastScanLoad" type="button" onclick="loadExisting()" style="margin-left:0.5rem">Laden</button>
+          </div>
           <p class="hint">Optional kann nach oben zusätzlich über die Ehre-Regel (höchstens 3000 Ehre über euch) erweitert werden.</p>
           <div class="form">
             <div class="field"><label for="downLimit">Down-Limit (unter euch)</label><input type="number" id="downLimit" value="300" min="0" max="50000"></div>
@@ -114,10 +111,6 @@
             <label class="check"><input type="checkbox" id="strictMode" checked><span>Strikt-Modus<small>Level-für-Level-Vergleich</small></span></label>
             <label class="check"><input type="checkbox" id="strictTopN" checked><span>Top-N Strikt<small>Gegen eure besten N kampfbereiten Mitglieder</small></span></label>
             <label class="check" title="Scannt die komplette Ehrenhalle bis Rang 1, unabhängig von der Ehre-Regel und von Max Extra-Seiten. Zeigt auch (noch) nicht angreifbare Gilden zum Vormerken/Probesimulieren an."><input type="checkbox" id="fullUpScan"><span>Komplette Ehrenhalle bis Rang 1<small>Ohne Ehre-Filter, nur günstige Seitenabrufe</small></span></label>
-          </div>
-          <div id="scanExisting" class="infobox hidden">
-            Vorhandene Scan-Daten vom <span id="scanDate"></span>.
-            <button class="btn sec small" type="button" onclick="loadExisting()" style="margin-left:0.5rem">Laden</button>
           </div>
           <div class="row">
             <button id="scanBtn" class="btn" type="button" onclick="doScan()"><svg class="icon"><use href="#i-scan"/></svg>Scan starten</button>

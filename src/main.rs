@@ -1402,6 +1402,7 @@ async fn status(State(handles): State<AppHandles>) -> impl IntoResponse {
         guild_name: Option<String>,
         has_scan_data: bool,
         scan_date: Option<String>,
+        own_guild: Option<OwnGuild>,
     }
 
     ok_response(StatusInfo {
@@ -1411,6 +1412,7 @@ async fn status(State(handles): State<AppHandles>) -> impl IntoResponse {
         guild_name: app.own_guild.as_ref().map(|g| g.name.clone()),
         has_scan_data: app.scan_data.is_some(),
         scan_date: app.scan_data.as_ref().map(|s| s.scanned_at.clone()),
+        own_guild: app.own_guild.clone(),
     })
 }
 
