@@ -5,13 +5,13 @@ use std::time::Duration;
 use axum::{
     Json, Router,
     extract::State,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use tower_http::services::ServeDir;
+use tower_http::{services::ServeDir, set_header::SetResponseHeader};
 
 use sf_api::{
     command::Command,
@@ -2068,9 +2068,14 @@ async fn main() {
         .route("/api/status", get(status))
         .route("/api/logout", post(logout))
         .route("/api/export", get(export_data))
-        .fallback_service(
+        // no-cache: Browser fragen bei jedem Aufruf nach (ETag/Last-Modified),
+        // damit nach einem Update nie alte und neue Frontend-Dateien gemischt
+        // im Cache liegen.
+        .fallback_service(SetResponseHeader::overriding(
             ServeDir::new("/app/static").append_index_html_on_directories(true),
-        )
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache"),
+        ))
         .with_state(handles);
 
     let addr = "0.0.0.0:8080";
