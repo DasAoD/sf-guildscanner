@@ -15,6 +15,7 @@ use tower_http::services::ServeDir;
 
 use sf_api::{
     command::Command,
+    gamestate::guild::{BattlesJoined, GuildRank},
     session::SimpleSession,
     simulate::{Fighter, PlayerFighterSquad, UpgradeableFighter, simulate_battle},
 };
@@ -61,6 +62,10 @@ struct MemberInfo {
     offline_days: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     is_active_24h: Option<bool>,
+    /// Für den Angriff angemeldet (Attack/Both). Nicht angemeldete Mitglieder
+    /// (z.B. frisch beigetretene) kämpfen nicht, auch wenn sie online sind.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attack_joined: Option<bool>,
 }
 
 /// Guild as seen in the Hall of Fame (no member details)
@@ -556,6 +561,10 @@ async fn select_character(
                 let mut active_members: Vec<MemberInfo> = Vec::new();
 
                 for m in &guild.members {
+                    // Eingeladene sind noch keine Mitglieder und kämpfen nicht
+                    if matches!(m.guild_rank, GuildRank::Invited) {
+                        continue;
+                    }
                     let (last_online, offline_days, is_active_24h) = match m.last_online.as_ref() {
                         Some(ts) => {
                             let dur = now.signed_duration_since(ts.clone());
@@ -577,9 +586,13 @@ async fn select_character(
                         last_online,
                         offline_days,
                         is_active_24h,
+                        attack_joined: Some(matches!(
+                            m.battles_joined,
+                            Some(BattlesJoined::Attack | BattlesJoined::Both)
+                        )),
                     };
 
-                    if info.is_active_24h.unwrap_or(false) {
+                    if info.is_active_24h.unwrap_or(false) && info.attack_joined.unwrap_or(false) {
                         active_members.push(info.clone());
                     }
                     members.push(info);
@@ -1024,12 +1037,14 @@ async fn run_scan(handles: AppHandles) -> Result<(), String> {
                         let members: Vec<MemberInfo> = other
                             .members
                             .iter()
+                            .filter(|m| !matches!(m.rank, GuildRank::Invited))
                             .map(|m| MemberInfo {
                                 name: m.name.clone(),
                                 level: m.level,
                                 last_online: None,
                                 offline_days: None,
                                 is_active_24h: None,
+                                attack_joined: None,
                             })
                             .collect();
 
@@ -1334,7 +1349,8 @@ async fn guild_details(
                 let members: Vec<MemberInfo> = other
                     .members
                     .iter()
-                    .map(|m| MemberInfo { name: m.name.clone(), level: m.level, last_online: None, offline_days: None, is_active_24h: None })
+                    .filter(|m| !matches!(m.rank, GuildRank::Invited))
+                    .map(|m| MemberInfo { name: m.name.clone(), level: m.level, last_online: None, offline_days: None, is_active_24h: None, attack_joined: None })
                     .collect();
 
                 let max_level = members.iter().map(|m| m.level).max().unwrap_or(0);
@@ -1521,9 +1537,10 @@ async fn get_own_fighters(state: &SharedState) -> Result<Vec<Fighter>, String> {
 
     log::info!("Own-fighters cache miss/stale, hole {} aktive Mitglieder frisch", active_names.len());
 
-    // Wir selbst: frisches Update, kostenlos aus dem GameState (kein ViewPlayer nötig).
+    // Wir selbst: frisches Update, kostenlos aus dem GameState (kein ViewPlayer
+    // nötig). Nur wenn wir selbst kampfbereit sind, sonst kämpfen wir nicht mit.
     let mut fighters: Vec<Fighter> = Vec::new();
-    {
+    if active_names.iter().any(|n| *n == own_name) {
         let mut app = state.lock().await;
         let session = &mut app.sessions[idx];
         let gs = session
@@ -1614,12 +1631,14 @@ async fn ensure_detailed_guild(state: &SharedState, guild_name: &str) -> Result<
     let members: Vec<MemberInfo> = other
         .members
         .iter()
+        .filter(|m| !matches!(m.rank, GuildRank::Invited))
         .map(|m| MemberInfo {
             name: m.name.clone(),
             level: m.level,
             last_online: None,
             offline_days: None,
             is_active_24h: None,
+            attack_joined: None,
         })
         .collect();
     let max_level = members.iter().map(|m| m.level).max().unwrap_or(0);

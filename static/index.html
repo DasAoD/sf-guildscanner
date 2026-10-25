@@ -448,7 +448,7 @@ function showGuild(g){
   const ownAvg=(g.member_count>0)?(ownTotal/g.member_count):0;
   $('guildStats').innerHTML=`
     <div class="stat"><div class="v">${g.member_count}</div><div class="l">Mitglieder</div></div>
-    <div class="stat"><div class="v">${(g.active_member_count??g.member_count)}</div><div class="l">Aktiv (24h)</div></div>
+    <div class="stat"><div class="v">${(g.active_member_count??g.member_count)}</div><div class="l" title="Online in den letzten 24 Stunden und für den Angriff angemeldet">Kampfbereit</div></div>
     <div class="stat"><div class="v">${ownMax}</div><div class="l">Max Level</div></div>
     <div class="stat"><div class="v">${ownMin}</div><div class="l">Min Level</div></div>
     <div class="stat"><div class="v">${ownAvg.toLocaleString('de',{minimumFractionDigits:1,maximumFractionDigits:1})}</div><div class="l">Ø Level</div></div>
@@ -459,7 +459,8 @@ function showGuild(g){
   [...g.members].sort((a,b)=>b.level-a.level).forEach(m=>{
     const tr=document.createElement('tr');
     const off=(m.offline_days!=null && m.offline_days>=1)?` <span class=\"badge b-red\" title=\"offline seit ${m.offline_days} Tagen\">off ${m.offline_days}d</span>`:'';
-    tr.innerHTML=`<td>${esc(m.name)}${off}</td><td>${m.level} ${levelBar(m.level,ownMax)}</td>`;
+    const nj=(m.attack_joined===false)?` <span class=\"badge b-red\" title=\"Nicht für den Angriff angemeldet, kämpft nicht mit\">nicht angemeldet</span>`:'';
+    tr.innerHTML=`<td>${esc(m.name)}${off}${nj}</td><td>${m.level} ${levelBar(m.level,ownMax)}</td>`;
     tb.appendChild(tr);
   });
 }
@@ -901,7 +902,7 @@ function renderDetail(g){
     const reason=(!g.strict_beatable && g.strict_fail_reason)?`<div style="margin-top:0.35rem;color:var(--dim)">${esc(g.strict_fail_reason)}</div>`:'';
     strictHtml=`<div style="margin-bottom:0.8rem;padding:0.5rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.82rem">
       <strong style="color:var(--gold)">Strikt-Modus${mode}:</strong> ${badge}<br>
-      Eigene aktiv (24h): <span class="b-gld badge">${g.strict_own_active_members}</span> | Gegner: <span class="b-gld badge">${g.member_count}</span>${g.strict_topn ? (' | Top-N: <span class="b-gld badge">'+g.strict_topn_n+'</span>') : ''}
+      Eigene kampfbereit: <span class="b-gld badge">${g.strict_own_active_members}</span> | Gegner: <span class="b-gld badge">${g.member_count}</span>${g.strict_topn ? (' | Top-N: <span class="b-gld badge">'+g.strict_topn_n+'</span>') : ''}
       ${reason}
     </div>`;
   }
