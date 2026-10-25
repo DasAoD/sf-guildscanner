@@ -72,7 +72,27 @@
         </div>
       </div>
       <div class="card">
+        <h3>Eure Mitglieder</h3>
+        <p class="hint">Nur Häkchen-Mitglieder treten in der Simulation für euch an. Inaktive (24h+) zählen nie mit.</p>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Name</th><th class="num">Level</th><th>Aktiv</th><th>Teilnahme an Simulation</th></tr></thead>
+            <tbody>
+              <tr><td class="name">Medea</td><td class="num">455</td><td><span class="tag ok">ja</span></td><td><input type="checkbox" checked></td></tr>
+              <tr><td class="name">Mitglied 2</td><td class="num">310</td><td><span class="tag ok">ja</span></td><td><input type="checkbox" checked></td></tr>
+              <tr><td class="name">Mitglied 3</td><td class="num">250</td><td><span class="tag ok">ja</span></td><td><input type="checkbox" checked></td></tr>
+              <tr><td class="name">Mitglied 4</td><td class="num">180</td><td><span class="tag ok">ja</span></td><td><input type="checkbox"></td></tr>
+              <tr><td class="name">Mitglied 5</td><td class="num">150</td><td><span class="tag ok">ja</span></td><td><input type="checkbox" checked></td></tr>
+              <tr><td class="name">Mitglied 6</td><td class="num">90</td><td><span class="tag ok">ja</span></td><td><input type="checkbox" checked></td></tr>
+              <tr><td class="name">Mitglied 7</td><td class="num">60</td><td><span class="tag muted">nein</span></td><td><input type="checkbox" disabled></td></tr>
+              <tr><td class="name">Mitglied 8</td><td class="num">41</td><td><span class="tag muted">nein</span></td><td><input type="checkbox" disabled></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
         <h3>Letzter Scan</h3>
+        <p class="hint">Gebunden an Medea · F29 · Gurkistan, für andere Benutzer nicht sichtbar</p>
         <p class="hint">2026-10-25 13:12:29 · 54 Kandidaten · 2 mit Strikt OK</p>
         <div class="row" style="margin-top:0.8rem">
           <a class="btn" href="#scan">Neuen Scan starten</a>
@@ -121,7 +141,7 @@
       </div>
       <div class="card">
         <div class="simbar">
-          <span class="grow">0 von 54 Gilden ausgewählt</span>
+          <span class="grow">0 von 54 Gilden ausgewählt · Teilnehmer: 5 von 6 aktiven (<a href="#overview" style="color:var(--gold)">ändern</a>)</span>
           <label class="hint" for="pz">Pilze</label>
           <select id="pz" style="width:auto"><option>0</option><option>1</option><option>2</option><option>3</option></select>
           <button class="btn sec" type="button">Simulieren</button>
@@ -147,7 +167,7 @@
       <div class="card">
         <div class="simbar">
           <label class="check"><input type="checkbox"><span>Nur (noch) nicht angreifbare</span></label>
-          <span class="grow"></span>
+          <span class="grow">Teilnehmer: 5 von 6 aktiven (<a href="#overview" style="color:var(--gold)">ändern</a>)</span>
           <label class="hint" for="pz2">Pilze</label>
           <select id="pz2" style="width:auto"><option>0</option><option>1</option><option>2</option><option>3</option></select>
           <button class="btn sec" type="button">Simulieren</button>
