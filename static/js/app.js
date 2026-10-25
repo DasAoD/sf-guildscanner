@@ -12,6 +12,14 @@ let hasScanData=false, scanDate='';
 let selectedGuilds=new Set();
 
 const PAGES=['overview','scan','results','hof','help'];
+const MUSH_ICON='<svg class="icon mush"><use href="#i-mush"/></svg>';
+let lastMushrooms='0';
+
+// Pilz-Auswahl und Start-Button pro Gildenzeile
+function rowActionsHtml(name){
+  const opts=[0,1,2,3].map(n=>`<option value="${n}"${String(n)===lastMushrooms?' selected':''}>${n}</option>`).join('');
+  return `<span class="rowact"><select class="rowMush" title="Pilze im Katapult">${opts}</select><button class="btn sec small" type="button" data-g="${esc(name)}" onclick="doSimulateRow(this)" title="Nur diese Gilde mit der gewählten Pilzzahl simulieren"><svg class="icon"><use href="#i-play"/></svg>Sim</button></span>`;
+}
 let view='login';
 
 document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=t(el.dataset.i18n);});
@@ -268,7 +276,7 @@ function simCellHtml(g){
   if(g.sim_win_ratio==null)return '<span class="neu">–</span>';
   const pct=g.sim_win_ratio*100;
   const cls=pct>=66?'pos':pct>=33?'neu':'neg';
-  const mush=g.sim_mushrooms?` <span title="Pilze im Katapult">· ${g.sim_mushrooms}</span>`:'';
+  const mush=g.sim_mushrooms?` <span title="Pilze im Katapult">${MUSH_ICON}${g.sim_mushrooms}</span>`:'';
   return `<span class="${cls}">${pct.toFixed(1)} %</span>${mush}`;
 }
 
@@ -312,7 +320,7 @@ function renderTable(){
       <td class="num">${g.honor.toLocaleString('de')}</td>
       <td class="num">${simCellHtml(g)}</td>
       <td>${atk}${strictBadge}</td>
-      <td><button class="btn sec small" type="button" data-g="${esc(g.name)}" onclick="showDetail(this.dataset.g)">Details</button></td>`;
+      <td>${rowActionsHtml(g.name)} <button class="btn sec small" type="button" data-g="${esc(g.name)}" onclick="showDetail(this.dataset.g)">Details</button></td>`;
     tb.appendChild(tr);
   });
 
@@ -372,7 +380,7 @@ function renderHofTable(){
       <td class="num">${g.honor.toLocaleString('de')}</td>
       <td>${atkBadge}</td>
       <td class="num">${simCellHtml(g)}</td>
-      <td><button class="btn sec small" type="button" data-g="${esc(g.name)}" onclick="showDetail(this.dataset.g)">Details</button></td>`;
+      <td>${rowActionsHtml(g.name)} <button class="btn sec small" type="button" data-g="${esc(g.name)}" onclick="showDetail(this.dataset.g)">Details</button></td>`;
     tb.appendChild(tr);
   });
 
@@ -486,7 +494,16 @@ async function doSimulate(mushroomSelectId){
     alert('Keine Gilden ausgewählt.\nBitte zuerst die gewünschten Gilden per Checkbox markieren.');
     return;
   }
-  const mushrooms=parseInt($(mushroomSelectId||'simMushrooms').value||'0');
+  startSim(checked,$(mushroomSelectId||'simMushrooms').value||'0');
+}
+
+function doSimulateRow(btn){
+  startSim([btn.dataset.g],btn.closest('.rowact').querySelector('.rowMush').value);
+}
+
+async function startSim(names,mush){
+  lastMushrooms=String(mush);
+  const mushrooms=parseInt(mush||'0');
 
   // Es kann immer nur eine Simulation gleichzeitig laufen, deshalb sind
   // Buttons und Fortschritt für beide Seiten (Ergebnisse + Ehrenhalle) gemeinsam.
@@ -496,7 +513,7 @@ async function doSimulate(mushroomSelectId){
   simUi(el=>el.classList.remove('neg'),'simMsg');
 
   try{
-    const r=await api('simulate',{guild_names:checked,mushrooms});
+    const r=await api('simulate',{guild_names:names,mushrooms});
     if(!r.success){simError(r.error); return;}
     pollSimProgress();
   }catch(e){simError('Fehler: '+e.message);}
@@ -603,7 +620,7 @@ function renderDetail(g){
     const badge=`<span class="${cls}" style="font-weight:700">${pct.toFixed(1)} %</span>`;
     simHtml=`<div class="infobox">
       <strong>Kampfsimulation:</strong> Sieg-Wahrscheinlichkeit ${badge}<br>
-      ${g.sim_mushrooms?`Pilzkatapult: <span class="b-gld badge">${g.sim_mushrooms}</span> | `:''}${g.sim_iterations} simulierte Kämpfe | Stand: ${esc(g.sim_evaluated_at||'')}
+      ${g.sim_mushrooms?`Pilzkatapult: <span class="b-gld badge">${MUSH_ICON}${g.sim_mushrooms}</span> | `:''}${g.sim_iterations} simulierte Kämpfe | Stand: ${esc(g.sim_evaluated_at||'')}
     </div>`;
   }
 
