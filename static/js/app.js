@@ -915,23 +915,41 @@ async function loadAccounts(){
   renderAccounts();
 }
 
+const openAccs=new Set();
+let accsSeen=false;
+
 function renderAccounts(){
   const box=$('accountsList'); box.innerHTML='';
   if(!accountsInfo.accounts.length){
     box.innerHTML='<div class="card empty">Noch keine Konten hinterlegt.</div>';
     return;
   }
+  // Beim ersten Anzeigen nur dann aufgeklappt, wenn es genau ein Konto gibt.
+  if(!accsSeen){
+    accsSeen=true;
+    if(accountsInfo.accounts.length===1)openAccs.add(accountsInfo.accounts[0].id);
+  }
   accountsInfo.accounts.forEach(a=>{
     const card=document.createElement('div');
     card.className='card acc';
     const chars=a.characters.map(c=>`<label class="char${c.active?' on':''}"><span><b>${esc(c.name)}</b><small>${esc(c.server)} · ${esc(guildText(c))}</small></span><span class="check"><input type="checkbox" data-name="${esc(c.name)}" data-server="${esc(c.server)}" ${c.active?'checked':''}></span></label>`).join('');
-    card.innerHTML=`<div class="acc-head"><h3 style="margin:0">${esc(a.sso_user)}</h3><span class="grow" style="flex:1"></span>
+    const open=openAccs.has(a.id);
+    const activeCount=a.characters.filter(c=>c.active).length;
+    card.innerHTML=`<div class="acc-head"><h3 style="margin:0"><button class="acc-toggle" type="button" aria-expanded="${open}"><span class="chev" aria-hidden="true">${open?'▾':'▸'}</span>${esc(a.sso_user)}<span class="hint">${activeCount} von ${a.characters.length} aktiv</span></button></h3><span class="hint" data-msg></span><span class="grow" style="flex:1"></span>
         <button class="btn sec small" type="button" data-act="refresh">Gilden aktualisieren</button>
         <button class="btn sec small" type="button" data-act="password">Passwort ändern</button>
         <button class="btn red small" type="button" data-act="delete">Entfernen</button></div>
+      <div class="acc-body${open?'':' hidden'}">
       <p class="hint">Haken = Charakter ist für Scan und Simulation nutzbar und erscheint unter "Charakter wechseln".</p>
       <div class="chars">${chars}</div>
-      <div class="row" style="margin-top:0.7rem"><button class="btn" type="button" data-act="save">Auswahl speichern</button><span class="hint" data-msg></span></div>`;
+      <div class="row" style="margin-top:0.7rem"><button class="btn" type="button" data-act="save">Auswahl speichern</button></div></div>`;
+    card.querySelector('.acc-toggle').addEventListener('click',e=>{
+      const t=e.currentTarget, body=card.querySelector('.acc-body'), show=body.classList.contains('hidden');
+      body.classList.toggle('hidden',!show);
+      if(show)openAccs.add(a.id); else openAccs.delete(a.id);
+      t.setAttribute('aria-expanded',show);
+      t.querySelector('.chev').textContent=show?'▾':'▸';
+    });
     card.querySelectorAll('.char input').forEach(i=>i.addEventListener('change',()=>i.closest('.char').classList.toggle('on',i.checked)));
     card.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>accountAction(a,b.dataset.act,card)));
     box.appendChild(card);
@@ -961,6 +979,7 @@ async function accountAction(a,act,card){
       if(!confirm(`Konto "${a.sso_user}" samt gespeichertem Passwort entfernen?`))return;
       const r=await api('accounts/delete',{id:a.id});
       if(!r.success){alert(r.error);return;}
+      openAccs.delete(a.id);
       const st=await api('status');
       if(st.success&&!st.data.guild_loaded&&ownGuild){location.reload();return;}
       await loadAccounts();
@@ -990,6 +1009,7 @@ async function addAccount(){
     const r=await api('accounts/add',{sso_user,password});
     if(!r.success){$('accAddMsg').textContent='Fehler: '+r.error;return;}
     $('accUser').value=''; $('accPass').value='';
+    openAccs.add(r.data.id);
     $('accAddMsg').textContent=`Konto "${r.data.sso_user}" gespeichert. Aktiviere jetzt die Charaktere, mit denen du arbeiten willst.`;
     await loadAccounts();
   }catch(e){$('accAddMsg').textContent='Fehler: '+e.message;}

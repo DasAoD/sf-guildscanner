@@ -133,6 +133,8 @@ tr:hover td { background: rgba(47, 143, 191, 0.08); }
 .acc { display: grid; gap: 0.7rem; }
 .acc-head { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; }
 .acc-head h4 { font-size: 1.05rem; }
+.acc-toggle { display: flex; align-items: center; gap: 0.6rem; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 0; text-align: left; }
+.acc-toggle .chev { color: var(--gold); width: 1em; }
 .chars { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0.55rem; margin-top: 0.6rem; }
 .char { display: flex; align-items: center; gap: 0.6rem; background: #07151e; border: 1px solid var(--line-soft); border-radius: 4px; padding: 0.5rem 0.6rem; }
 .char.on { border-color: var(--gold); }
