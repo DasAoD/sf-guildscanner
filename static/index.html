@@ -90,8 +90,8 @@
         </div>
         <div class="card">
           <h3>Eure Mitglieder</h3>
-          <div class="tablewrap"><table id="ownMembers"><thead><tr><th>Name</th><th>Level</th></tr></thead><tbody></tbody></table></div>
-          <p class="hint">Ausgegraut: tritt in der Simulation nicht an (nicht für den Angriff angemeldet oder länger als 24 Stunden offline).</p>
+          <div class="tablewrap"><table id="ownMembers"><thead><tr><th>Name</th><th>Level</th><th title="Tritt in der Simulation für euch an">Teilnahme</th></tr></thead><tbody></tbody></table></div>
+          <p class="hint">Haken = tritt in der Simulation für euch an. Ausgegraut: nicht kampfbereit (nicht für den Angriff angemeldet oder länger als 24 Stunden offline). Noch nicht angemeldete Mitglieder lassen sich für eine Planung per Haken zuschalten, wer länger als 24 Stunden offline ist, nicht.</p>
         </div>
       </section>
 
@@ -148,6 +148,8 @@
               <span class="grow" id="selInfo">0 Gilden ausgewählt</span>
               <button class="btn sec small" type="button" onclick="selectAllVisible('rBody')">Alle auswählen</button>
               <button class="btn sec small" type="button" onclick="deselectAll('rBody')">Auswahl aufheben</button>
+              <span class="hint partInfo"></span>
+              <div class="colmenu" data-for="rTable"><button class="btn sec small" type="button">Spalten</button><div class="menu" hidden></div></div>
               <label class="hint" for="simMushrooms">Pilze</label>
               <select id="simMushrooms" style="width:auto"><option value="0" selected>0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
               <button class="btn sec simBtn" type="button" onclick="doSimulate()" title="Ausgewählte Gilden per Kampfsimulation gegen die eigene kampfbereite Aufstellung durchrechnen">Simulieren</button>
@@ -158,17 +160,17 @@
             <div class="tablewrap">
               <table id="rTable">
                 <thead><tr>
-                  <th style="width:32px"><input type="checkbox" id="selAll" title="Alle auswählen / abwählen" onchange="toggleAll(this,'rBody')"></th>
-                  <th data-sort onclick="sortBy('name')">Gilde <span class="arrow" id="sort_name"></span></th>
-                  <th data-sort class="num" onclick="sortBy('member_count')">Mitgl. <span class="arrow" id="sort_member_count"></span></th>
-                  <th data-sort class="num" onclick="sortBy('max_level')">Max Lvl <span class="arrow" id="sort_max_level"></span></th>
-                  <th data-sort class="num" onclick="sortBy('min_level')">Min Lvl <span class="arrow" id="sort_min_level"></span></th>
-                  <th data-sort class="num" onclick="sortBy('avg_level')">Ø Level <span class="arrow" id="sort_avg_level"></span></th>
-                  <th data-sort class="num" onclick="sortBy('rank')">Rang <span class="arrow" id="sort_rank"></span></th>
-                  <th data-sort class="num" onclick="sortBy('honor')">Ehre <span class="arrow" id="sort_honor"></span></th>
-                  <th data-sort class="num" onclick="sortBy('sim_win_ratio')">Sim <span class="arrow" id="sort_sim_win_ratio"></span></th>
-                  <th>Status</th>
-                  <th></th>
+                  <th style="width:32px" data-col="sel" data-lock><input type="checkbox" id="selAll" title="Alle auswählen / abwählen" onchange="toggleAll(this,'rBody')"></th>
+                  <th data-sort onclick="sortBy('name')" data-col="name" data-lock>Gilde <span class="arrow" id="sort_name"></span></th>
+                  <th data-sort class="num" onclick="sortBy('member_count')" data-col="members">Mitgl. <span class="arrow" id="sort_member_count"></span></th>
+                  <th data-sort class="num" onclick="sortBy('max_level')" data-col="maxlvl">Max Lvl <span class="arrow" id="sort_max_level"></span></th>
+                  <th data-sort class="num" onclick="sortBy('min_level')" data-col="minlvl">Min Lvl <span class="arrow" id="sort_min_level"></span></th>
+                  <th data-sort class="num" onclick="sortBy('avg_level')" data-col="avg">Ø Level <span class="arrow" id="sort_avg_level"></span></th>
+                  <th data-sort class="num" onclick="sortBy('rank')" data-col="rank">Rang <span class="arrow" id="sort_rank"></span></th>
+                  <th data-sort class="num" onclick="sortBy('honor')" data-col="honor">Ehre <span class="arrow" id="sort_honor"></span></th>
+                  <th data-sort class="num" onclick="sortBy('sim_win_ratio')" data-col="sim">Sim <span class="arrow" id="sort_sim_win_ratio"></span></th>
+                  <th data-col="status">Status</th>
+                  <th data-col="act" data-lock></th>
                 </tr></thead>
                 <tbody id="rBody"></tbody>
               </table>
@@ -197,6 +199,8 @@
               <span class="grow" id="selInfoHof">0 Gilden ausgewählt</span>
               <button class="btn sec small" type="button" onclick="selectAllVisible('hofBody')">Alle auswählen</button>
               <button class="btn sec small" type="button" onclick="deselectAll('hofBody')">Auswahl aufheben</button>
+              <span class="hint partInfo"></span>
+              <div class="colmenu" data-for="hofTable"><button class="btn sec small" type="button">Spalten</button><div class="menu" hidden></div></div>
               <label class="hint" for="simMushroomsHof">Pilze</label>
               <select id="simMushroomsHof" style="width:auto"><option value="0" selected>0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
               <button class="btn sec simBtn" type="button" onclick="doSimulate('simMushroomsHof')" title="Funktioniert auch für noch nicht angreifbare Gilden (wird bei Bedarf live nachgeladen)">Simulieren</button>
@@ -207,14 +211,14 @@
             <div class="tablewrap">
               <table id="hofTable">
                 <thead><tr>
-                  <th style="width:32px"><input type="checkbox" id="selAllHof" title="Alle auswählen / abwählen" onchange="toggleAll(this,'hofBody')"></th>
-                  <th data-sort class="num" onclick="sortHofBy('rank')">Rang <span class="arrow" id="hsort_rank"></span></th>
-                  <th data-sort onclick="sortHofBy('name')">Gilde <span class="arrow" id="hsort_name"></span></th>
-                  <th data-sort class="num" onclick="sortHofBy('member_count')">Mitgl. <span class="arrow" id="hsort_member_count"></span></th>
-                  <th data-sort class="num" onclick="sortHofBy('honor')">Ehre <span class="arrow" id="hsort_honor"></span></th>
-                  <th data-sort onclick="sortHofBy('attackable')">Angreifbar <span class="arrow" id="hsort_attackable"></span></th>
-                  <th data-sort class="num" onclick="sortHofBy('sim_win_ratio')">Sim <span class="arrow" id="hsort_sim_win_ratio"></span></th>
-                  <th></th>
+                  <th style="width:32px" data-col="sel" data-lock><input type="checkbox" id="selAllHof" title="Alle auswählen / abwählen" onchange="toggleAll(this,'hofBody')"></th>
+                  <th data-sort class="num" onclick="sortHofBy('rank')" data-col="rank">Rang <span class="arrow" id="hsort_rank"></span></th>
+                  <th data-sort onclick="sortHofBy('name')" data-col="name" data-lock>Gilde <span class="arrow" id="hsort_name"></span></th>
+                  <th data-sort class="num" onclick="sortHofBy('member_count')" data-col="members">Mitgl. <span class="arrow" id="hsort_member_count"></span></th>
+                  <th data-sort class="num" onclick="sortHofBy('honor')" data-col="honor">Ehre <span class="arrow" id="hsort_honor"></span></th>
+                  <th data-sort onclick="sortHofBy('attackable')" data-col="attackable">Angreifbar <span class="arrow" id="hsort_attackable"></span></th>
+                  <th data-sort class="num" onclick="sortHofBy('sim_win_ratio')" data-col="sim">Sim <span class="arrow" id="hsort_sim_win_ratio"></span></th>
+                  <th data-col="act" data-lock></th>
                 </tr></thead>
                 <tbody id="hofBody"></tbody>
               </table>

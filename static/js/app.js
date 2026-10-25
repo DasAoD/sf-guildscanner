@@ -134,6 +134,81 @@ async function doSwitchCharacter(){
   }catch(e){alert('Fehler: '+e.message);}
 }
 
+// ── TEILNAHME AN DER SIMULATION ────────────────────────────
+// ready: kampfbereit, planable: online, aber nicht für den Angriff angemeldet
+// (per Haken für eine Planung zuschaltbar), offline: länger als 24h weg.
+let partState={};
+// Live-Gilde, auf die sich die Auswahl bezieht (nicht der Scan-Snapshot aus applyFilter)
+let partGuild=null;
+function memberKind(m){
+  if(m.is_active_24h===false)return 'offline';
+  if(m.attack_joined===false)return 'planable';
+  return 'ready';
+}
+function loadPart(g){
+  partGuild=g;
+  let saved={};
+  try{saved=JSON.parse(localStorage.getItem('part:'+g.name))||{};}catch(e){/* ohne Speicher gelten die Vorgaben */}
+  partState={};
+  g.members.forEach(m=>{
+    const k=memberKind(m);
+    partState[m.name]=k==='offline'?false:(m.name in saved?!!saved[m.name]:k==='ready');
+  });
+}
+function savePart(){
+  try{localStorage.setItem('part:'+partGuild.name,JSON.stringify(partState));}catch(e){/* nur Komfort */}
+}
+function participation(){
+  const include=[], exclude=[];
+  (partGuild?.members||[]).forEach(m=>{
+    const k=memberKind(m), on=!!partState[m.name];
+    if(k==='ready'&&!on)exclude.push(m.name);
+    if(k==='planable'&&on)include.push(m.name);
+  });
+  return {include,exclude};
+}
+function updatePartInfo(){
+  const n=Object.values(partState).filter(Boolean).length;
+  const ready=(partGuild?.members||[]).filter(m=>memberKind(m)==='ready').length;
+  document.querySelectorAll('.partInfo').forEach(el=>{
+    el.innerHTML=`Teilnehmer: ${n} (${ready} kampfbereit) <a href="#overview">ändern</a>`;
+  });
+}
+
+// ── SPALTEN-UMSCHALTER ─────────────────────────────────────
+const colHidden={};
+function applyCols(tableId){
+  const table=$(tableId); if(!table)return;
+  const hidden=colHidden[tableId]||new Set();
+  [...table.querySelectorAll('thead th')].forEach((th,i)=>{
+    const off=hidden.has(th.dataset.col);
+    table.querySelectorAll('tr').forEach(tr=>{if(tr.cells[i])tr.cells[i].classList.toggle('colhide',off);});
+  });
+}
+function initColMenus(){
+  document.querySelectorAll('.colmenu').forEach(box=>{
+    const tableId=box.dataset.for, table=$(tableId), menu=box.querySelector('.menu');
+    let saved=[];
+    try{saved=JSON.parse(localStorage.getItem('cols:'+tableId))||[];}catch(e){/* nur Komfort */}
+    colHidden[tableId]=new Set(saved);
+    [...table.querySelectorAll('thead th')].filter(th=>!('lock' in th.dataset)).forEach(th=>{
+      const label=document.createElement('label'); label.className='check';
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!colHidden[tableId].has(th.dataset.col);
+      cb.addEventListener('change',()=>{
+        if(cb.checked)colHidden[tableId].delete(th.dataset.col); else colHidden[tableId].add(th.dataset.col);
+        try{localStorage.setItem('cols:'+tableId,JSON.stringify([...colHidden[tableId]]));}catch(e){/* nur Komfort */}
+        applyCols(tableId);
+      });
+      label.append(cb,th.firstChild.textContent.trim());
+      menu.append(label);
+    });
+    box.querySelector('button').addEventListener('click',e=>{e.stopPropagation(); menu.hidden=!menu.hidden;});
+    menu.addEventListener('click',e=>e.stopPropagation());
+    applyCols(tableId);
+  });
+  document.addEventListener('click',()=>document.querySelectorAll('.colmenu .menu').forEach(m=>{m.hidden=true;}));
+}
+
 // ── OWN GUILD ──────────────────────────────────────────────
 function showGuild(g){
   ownGuild=g;
@@ -154,15 +229,21 @@ function showGuild(g){
     <div class="stat"><b>#${g.rank}</b><span>Rang</span></div>
     <div class="stat"><b>${g.honor.toLocaleString('de')}</b><span>Ehre</span></div>`;
 
+  loadPart(g);
   const tb=$('ownMembers').querySelector('tbody'); tb.innerHTML='';
   [...g.members].sort((a,b)=>b.level-a.level).forEach(m=>{
     const tr=document.createElement('tr');
+    const k=memberKind(m);
     const off=(m.offline_days!=null && m.offline_days>=1)?` <span class="badge b-red" title="offline seit ${m.offline_days} Tagen">off ${m.offline_days}d</span>`:'';
-    const ready=(m.is_active_24h!==false)&&(m.attack_joined!==false);
-    tr.className=ready?'':'dim';
-    tr.innerHTML=`<td>${esc(m.name)}${off}</td><td>${m.level} ${levelBar(m.level,ownMax)}</td>`;
+    tr.className=k==='ready'?'':'dim';
+    tr.innerHTML=`<td>${esc(m.name)}${off}</td><td>${m.level} ${levelBar(m.level,ownMax)}</td>
+      <td><input type="checkbox" data-name="${esc(m.name)}" ${partState[m.name]?'checked':''} ${k==='offline'?'disabled':''}></td>`;
+    tr.querySelector('input').addEventListener('change',e=>{
+      partState[e.target.dataset.name]=e.target.checked; savePart(); updatePartInfo();
+    });
     tb.appendChild(tr);
   });
+  updatePartInfo();
 }
 
 function levelBar(lvl,max){
@@ -324,6 +405,7 @@ function renderTable(){
     tb.appendChild(tr);
   });
 
+  applyCols('rTable');
   // Erst jetzt, mit den tatsächlich gerenderten (ggf. vorbelegten) Checkboxen,
   // Zähler + Header-Checkbox-Zustand berechnen.
   updateSelInfo();
@@ -384,6 +466,7 @@ function renderHofTable(){
     tb.appendChild(tr);
   });
 
+  applyCols('hofTable');
   updateSelInfo();
 }
 
@@ -513,7 +596,8 @@ async function startSim(names,mush){
   simUi(el=>el.classList.remove('neg'),'simMsg');
 
   try{
-    const r=await api('simulate',{guild_names:names,mushrooms});
+    const p=participation();
+    const r=await api('simulate',{guild_names:names,mushrooms,include_members:p.include,exclude_members:p.exclude});
     if(!r.success){simError(r.error); return;}
     pollSimProgress();
   }catch(e){simError('Fehler: '+e.message);}
@@ -671,6 +755,8 @@ function esc(s){const d=document.createElement('div');d.textContent=s;return d.i
     sync();
   }
 })();
+
+initColMenus();
 
 // Nach einem Seiten-Refresh hält der Server die Sitzung noch: Zustand
 // wiederherstellen statt wieder den Login zu zeigen.

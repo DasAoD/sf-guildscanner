@@ -199,7 +199,9 @@ struct OwnFightersCache {
     /// Vergleichsbasis, um Roster-Änderungen (Zu-/Abgänge, Aktiv-Wechsel)
     /// sofort zu erkennen, unabhängig vom Zeitfenster.
     active_names: Vec<String>,
-    fighters: Vec<Fighter>,
+    /// Kampfwerte je Mitgliedsname, damit einzelne Mitglieder später per
+    /// Teilnahme-Auswahl herausgefiltert werden können.
+    fighters: Vec<(String, Fighter)>,
 }
 
 /// Wie lange ein Cache der eigenen Kampfwerte ohne Roster-Änderung gültig
@@ -327,6 +329,13 @@ struct SimulateRequest {
     /// geclampt)
     #[serde(default)]
     iterations: Option<u32>,
+    /// Kampfbereite eigene Mitglieder, die nicht antreten sollen
+    #[serde(default)]
+    exclude_members: Vec<String>,
+    /// Eigene Mitglieder, die zusätzlich antreten sollen, obwohl sie nicht
+    /// kampfbereit sind (Planung)
+    #[serde(default)]
+    include_members: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -1510,83 +1519,126 @@ fn apply_mushrooms(base: &[Fighter], mushrooms: u8) -> Vec<Fighter> {
     right
 }
 
-/// Holt die Kampfwerte der eigenen aktiven Mitglieder — aus dem Cache, wenn
-/// er noch zum aktuellen Aktiv-Roster passt und nicht älter als
-/// `OWN_FIGHTERS_TTL_HOURS` ist, sonst frisch per ViewPlayer (+ wir selbst
-/// kostenlos aus dem GameState). Aktualisiert den Cache nach einem Refresh.
-async fn get_own_fighters(state: &SharedState) -> Result<Vec<Fighter>, String> {
-    let (idx, own_name, guild_name, mut active_names) = {
-        let app = state.lock().await;
-        let idx = app.selected.ok_or_else(|| "Kein Charakter ausgewählt".to_string())?;
-        let own_name = app.sessions[idx].username().to_string();
-        let og = app.own_guild.as_ref().ok_or_else(|| "Keine Gilde geladen".to_string())?;
-        let names: Vec<String> = og.active_members.iter().map(|m| m.name.clone()).collect();
-        (idx, own_name, og.name.clone(), names)
-    };
-    active_names.sort();
-
-    {
-        let app = state.lock().await;
-        if let Some(cache) = &app.own_fighters_cache {
-            let fresh_enough = chrono::Local::now().signed_duration_since(cache.fetched_at)
-                < chrono::Duration::hours(OWN_FIGHTERS_TTL_HOURS);
-            if fresh_enough && cache.guild_name == guild_name && cache.active_names == active_names {
-                log::info!("Own-fighters cache hit ({} Kämpfer, vom {})", cache.fighters.len(), cache.fetched_at);
-                return Ok(cache.fighters.clone());
-            }
-        }
-    }
-
-    log::info!("Own-fighters cache miss/stale, hole {} aktive Mitglieder frisch", active_names.len());
-
-    // Wir selbst: frisches Update, kostenlos aus dem GameState (kein ViewPlayer
-    // nötig). Nur wenn wir selbst kampfbereit sind, sonst kämpfen wir nicht mit.
-    let mut fighters: Vec<Fighter> = Vec::new();
-    if active_names.contains(&own_name) {
-        let mut app = state.lock().await;
-        let session = &mut app.sessions[idx];
+/// Holt die Kampfwerte eines eigenen Mitglieds: wir selbst kostenlos per
+/// Update aus dem GameState, alle anderen per ViewPlayer.
+async fn fetch_member_fighter(
+    state: &SharedState,
+    idx: usize,
+    own_name: &str,
+    name: &str,
+) -> Result<Option<Fighter>, String> {
+    let mut app = state.lock().await;
+    let session = &mut app.sessions[idx];
+    if name == own_name {
         let gs = session
             .send_command(Command::Update)
             .await
             .map_err(|e| format!("Update fehlgeschlagen: {:?}", e))?;
         let squad = PlayerFighterSquad::new(gs);
-        fighters.push(Fighter::from(&squad.character));
+        return Ok(Some(Fighter::from(&squad.character)));
     }
-
-    // Alle anderen aktiven Mitglieder per ViewPlayer.
-    let mut calls_made = 0u32;
-    for name in active_names.iter().filter(|n| n.as_str() != own_name) {
-        if calls_made > 0 {
-            tokio::time::sleep(Duration::from_millis(SIM_VIEWPLAYER_DELAY_MS)).await;
+    match session.send_command(Command::ViewPlayer { ident: name.to_string() }).await {
+        Ok(gs) => Ok(gs
+            .lookup
+            .lookup_name(name)
+            .map(|p| Fighter::from(&UpgradeableFighter::from_other(p)))),
+        Err(e) => {
+            log::warn!("ViewPlayer für eigenes Mitglied '{}' fehlgeschlagen: {:?}", name, e);
+            Ok(None)
         }
-        calls_made += 1;
+    }
+}
 
-        let uf = {
-            let mut app = state.lock().await;
-            let session = &mut app.sessions[idx];
-            match session.send_command(Command::ViewPlayer { ident: name.clone() }).await {
-                Ok(gs) => gs.lookup.lookup_name(name).map(UpgradeableFighter::from_other),
-                Err(e) => {
-                    log::warn!("ViewPlayer für eigenes Mitglied '{}' fehlgeschlagen: {:?}", name, e);
-                    None
+/// Holt die Kampfwerte der eigenen kampfbereiten Mitglieder — aus dem Cache,
+/// wenn er noch zum aktuellen Roster passt und nicht älter als
+/// `OWN_FIGHTERS_TTL_HOURS` ist, sonst frisch. Aktualisiert den Cache nach
+/// einem Refresh. `exclude` nimmt Mitglieder aus der Aufstellung, `include`
+/// schaltet zusätzlich Mitglieder zu, die nicht kampfbereit sind (z.B. noch
+/// nicht für den Angriff angemeldet; Planung). Namen, die nicht zur eigenen
+/// Gilde gehören, werden ignoriert.
+async fn get_own_fighters(
+    state: &SharedState,
+    include: &[String],
+    exclude: &[String],
+) -> Result<Vec<Fighter>, String> {
+    let (idx, own_name, guild_name, mut active_names, member_names) = {
+        let app = state.lock().await;
+        let idx = app.selected.ok_or_else(|| "Kein Charakter ausgewählt".to_string())?;
+        let own_name = app.sessions[idx].username().to_string();
+        let og = app.own_guild.as_ref().ok_or_else(|| "Keine Gilde geladen".to_string())?;
+        let names: Vec<String> = og.active_members.iter().map(|m| m.name.clone()).collect();
+        let members: Vec<String> = og.members.iter().map(|m| m.name.clone()).collect();
+        (idx, own_name, og.name.clone(), names, members)
+    };
+    active_names.sort();
+
+    let cached = {
+        let app = state.lock().await;
+        app.own_fighters_cache.as_ref().and_then(|cache| {
+            let fresh_enough = chrono::Local::now().signed_duration_since(cache.fetched_at)
+                < chrono::Duration::hours(OWN_FIGHTERS_TTL_HOURS);
+            if fresh_enough && cache.guild_name == guild_name && cache.active_names == active_names {
+                log::info!("Own-fighters cache hit ({} Kämpfer, vom {})", cache.fighters.len(), cache.fetched_at);
+                Some(cache.fighters.clone())
+            } else {
+                None
+            }
+        })
+    };
+
+    let missed = cached.is_none();
+    let ready: Vec<(String, Fighter)> = match cached {
+        Some(hit) => hit,
+        None => {
+            log::info!("Own-fighters cache miss/stale, hole {} aktive Mitglieder frisch", active_names.len());
+            let mut fresh: Vec<(String, Fighter)> = Vec::new();
+
+            // Wir selbst nur, wenn wir selbst kampfbereit sind.
+            if active_names.contains(&own_name) {
+                if let Some(f) = fetch_member_fighter(state, idx, &own_name, &own_name).await? {
+                    fresh.push((own_name.clone(), f));
                 }
             }
-        };
 
-        match uf {
-            Some(uf) => fighters.push(Fighter::from(&uf)),
-            None => log::warn!("Kein ViewPlayer-Ergebnis für eigenes Mitglied '{}'", name),
+            for (i, name) in active_names.iter().filter(|n| n.as_str() != own_name).enumerate() {
+                if i > 0 {
+                    tokio::time::sleep(Duration::from_millis(SIM_VIEWPLAYER_DELAY_MS)).await;
+                }
+                match fetch_member_fighter(state, idx, &own_name, name).await? {
+                    Some(f) => fresh.push((name.clone(), f)),
+                    None => log::warn!("Kein ViewPlayer-Ergebnis für eigenes Mitglied '{}'", name),
+                }
+            }
+
+            let mut app = state.lock().await;
+            app.own_fighters_cache = Some(OwnFightersCache {
+                fetched_at: chrono::Local::now(),
+                guild_name,
+                active_names: active_names.clone(),
+                fighters: fresh.clone(),
+            });
+            fresh
         }
-    }
+    };
 
+    let mut fighters: Vec<Fighter> = ready
+        .into_iter()
+        .filter(|(name, _)| !exclude.contains(name))
+        .map(|(_, f)| f)
+        .collect();
+
+    for (i, name) in include
+        .iter()
+        .filter(|n| member_names.contains(n) && !active_names.contains(n))
+        .enumerate()
     {
-        let mut app = state.lock().await;
-        app.own_fighters_cache = Some(OwnFightersCache {
-            fetched_at: chrono::Local::now(),
-            guild_name,
-            active_names,
-            fighters: fighters.clone(),
-        });
+        if i > 0 || missed {
+            tokio::time::sleep(Duration::from_millis(SIM_VIEWPLAYER_DELAY_MS)).await;
+        }
+        match fetch_member_fighter(state, idx, &own_name, name).await? {
+            Some(f) => fighters.push(f),
+            None => log::warn!("Kein Ergebnis für zugeschaltetes Mitglied '{}'", name),
+        }
     }
 
     Ok(fighters)
@@ -1838,17 +1890,26 @@ async fn start_simulate(
     let mushrooms = req.mushrooms.min(3);
     let iterations = req.iterations.unwrap_or(2500).clamp(100, 20_000);
     let guild_names = req.guild_names.clone();
+    let include = req.include_members.clone();
+    let exclude = req.exclude_members.clone();
 
     let handles_clone = handles.clone();
     tokio::spawn(async move {
-        run_simulate(handles_clone, guild_names, mushrooms, iterations).await;
+        run_simulate(handles_clone, guild_names, mushrooms, iterations, include, exclude).await;
     });
 
     Ok(ok_response("Simulation gestartet".to_string()))
 }
 
 /// The actual simulation logic, running as a background task
-async fn run_simulate(handles: AppHandles, guild_names: Vec<String>, mushrooms: u8, iterations: u32) {
+async fn run_simulate(
+    handles: AppHandles,
+    guild_names: Vec<String>,
+    mushrooms: u8,
+    iterations: u32,
+    include: Vec<String>,
+    exclude: Vec<String>,
+) {
     {
         let mut p = handles.progress.lock().await;
         p.sim = SimProgress {
@@ -1860,7 +1921,7 @@ async fn run_simulate(handles: AppHandles, guild_names: Vec<String>, mushrooms: 
         };
     }
 
-    let own_fighters = match get_own_fighters(&handles.state).await {
+    let own_fighters = match get_own_fighters(&handles.state, &include, &exclude).await {
         Ok(f) => f,
         Err(e) => {
             let mut p = handles.progress.lock().await;
@@ -1874,6 +1935,18 @@ async fn run_simulate(handles: AppHandles, guild_names: Vec<String>, mushrooms: 
             return;
         }
     };
+
+    if own_fighters.is_empty() {
+        let mut p = handles.progress.lock().await;
+        p.sim = SimProgress {
+            running: false,
+            phase: "error".into(),
+            current: 0,
+            total: 0,
+            message: "Keine Teilnehmer: Es tritt kein eigenes Mitglied an (Teilnahme-Auswahl auf der Übersicht prüfen)".into(),
+        };
+        return;
+    }
 
     {
         let mut p = handles.progress.lock().await;
@@ -1965,7 +2038,7 @@ async fn refresh_own_fighters_endpoint(State(handles): State<AppHandles>) -> imp
         let mut app = handles.state.lock().await;
         app.own_fighters_cache = None;
     }
-    match get_own_fighters(&handles.state).await {
+    match get_own_fighters(&handles.state, &[], &[]).await {
         Ok(fighters) => Ok(ok_response(format!(
             "{} eigene Kampfwerte aktualisiert",
             fighters.len()
