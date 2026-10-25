@@ -691,9 +691,31 @@ async fn abort_scan(State(handles): State<AppHandles>) -> impl IntoResponse {
     ok_response("Abbruch angefordert".to_string())
 }
 
+/// Einträge pro Gilden-Ehrenhalle-Seite, die der Server tatsächlich liefert.
+const HOF_GROUP_PAGE_SIZE: u32 = 50;
+
+/// Gilden-Ehrenhalle-Seite `page` (0-basiert, Ränge `50*page+1..=50*page+50`).
+///
+/// `Command::HallOfFameGroupPage` von sf-api rückt pro Seite um 51 Positionen
+/// vor, der Server liefert pro Anfrage (`//25/25`) aber nur 50 Einträge
+/// (Position-25 bis Position+24). Dadurch fehlte jeweils der letzte Rang
+/// jeder Seite (#51, #102, #153, ...). Mit Schrittweite 50 schließen die
+/// Seiten lückenlos aneinander an.
+fn hof_group_page(page: u32) -> Command {
+    Command::Custom {
+        cmd_name: "GroupGetHallOfFame".to_string(),
+        arguments: vec![
+            (26 + HOF_GROUP_PAGE_SIZE * page).to_string(),
+            String::new(),
+            "25".to_string(),
+            "25".to_string(),
+        ],
+    }
+}
+
 /// The actual scan logic, running as a background task
 async fn run_scan(handles: AppHandles) -> Result<(), String> {
-    const PAGE_SIZE: u32 = 51;
+    const PAGE_SIZE: u32 = HOF_GROUP_PAGE_SIZE;
 
     // Snapshot required state + reset cancel flag
     let (own_guild, server, settings) = {
@@ -789,7 +811,7 @@ async fn run_scan(handles: AppHandles) -> Result<(), String> {
             let mut app = handles.state.lock().await;
             let idx = app.selected.unwrap();
             let session = &mut app.sessions[idx];
-            match session.send_command(Command::HallOfFameGroupPage { page }).await {
+            match session.send_command(hof_group_page(page)).await {
                 Ok(gs) => gs.hall_of_fames.guilds.clone(),
                 Err(e) => {
                     log::warn!("HoF page {} error: {:?}", page, e);
@@ -879,7 +901,7 @@ async fn run_scan(handles: AppHandles) -> Result<(), String> {
             let mut app = handles.state.lock().await;
             let idx = app.selected.unwrap();
             let session = &mut app.sessions[idx];
-            match session.send_command(Command::HallOfFameGroupPage { page }).await {
+            match session.send_command(hof_group_page(page)).await {
                 Ok(gs) => gs.hall_of_fames.guilds.clone(),
                 Err(e) => {
                     log::warn!("HoF page {} error: {:?}", page, e);

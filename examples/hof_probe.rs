@@ -12,6 +12,9 @@
 //!   CHARACTER      — eigener Charaktername (Pflicht)
 //!   FIRST_PAGE     — erste Seite (optional, default 0)
 //!   LAST_PAGE      — letzte Seite (optional, default 3)
+//!   STRIDE         — Positionsschritt pro Seite (optional, default 50;
+//!                    51 = Verhalten von sf-api's HallOfFameGroupPage, bei dem
+//!                    der letzte Rang jeder Seite fehlt)
 //!   FIND           — Gildenname, der in den Seiten gesucht wird (optional)
 
 use std::{env, time::Duration};
@@ -45,6 +48,7 @@ async fn main() {
     let first: u32 = opt_env("FIRST_PAGE").and_then(|v| v.parse().ok()).unwrap_or(0);
     let last: u32 = opt_env("LAST_PAGE").and_then(|v| v.parse().ok()).unwrap_or(3);
     let find = opt_env("FIND");
+    let stride: u32 = opt_env("STRIDE").and_then(|v| v.parse().ok()).unwrap_or(50);
 
     let mut sessions = match SimpleSession::login_sf_account(&sso_user, &sso_pass).await {
         Ok(s) => s,
@@ -67,7 +71,16 @@ async fn main() {
 
     let mut all_ranks: Vec<u32> = Vec::new();
     for page in first..=last {
-        let gs = match session.send_command(Command::HallOfFameGroupPage { page }).await {
+        let cmd = Command::Custom {
+            cmd_name: "GroupGetHallOfFame".to_string(),
+            arguments: vec![
+                (26 + stride * page).to_string(),
+                String::new(),
+                "25".to_string(),
+                "25".to_string(),
+            ],
+        };
+        let gs = match session.send_command(cmd).await {
             Ok(gs) => gs,
             Err(e) => {
                 eprintln!("Seite {page}: Fehler {e:?}");
