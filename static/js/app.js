@@ -43,11 +43,18 @@ function route(){
   if(page==='character')loadCharacterPage();
   window.scrollTo(0,0);
 }
-// Angemeldeter Benutzer (und Gilde) unten in der Seitenleiste
+function hostOf(url){
+  try{return new URL(url).hostname;}catch(e){return url;}
+}
+
+// Angemeldeter Benutzer, aktiver Charakter und Gilde oben in der Seitenleiste
 function updateWho(){
   if(!authUser){$('who').textContent=''; return;}
-  const guild=ownGuild?`<br>${esc(ownGuild.name)}`:'';
-  $('who').innerHTML=`Angemeldet als <b>${esc(authUser.name)}</b>${authUser.is_admin?' (Admin)':''}${guild}`;
+  let html=`Angemeldet als <b>${esc(authUser.name)}</b>${authUser.is_admin?' (Admin)':''}`;
+  if(activeChar&&ownGuild){
+    html+=`<br><span class="chr" title="${esc(activeChar.server)}">${esc(activeChar.name)}</span> <span class="gld">${esc(ownGuild.name)}</span>`;
+  }
+  $('who').innerHTML=html;
 }
 
 function goPage(page){
@@ -99,7 +106,11 @@ async function loadCharacterPage(){
   showSso();
 }
 
+let activeChar=null;
+let charsList=[];
+
 function showChars(chars){
+  charsList=chars;
   $('ssoCard').classList.add('hidden');
   $('charCard').classList.remove('hidden');
   const l=$('charList'); l.innerHTML='';
@@ -147,6 +158,8 @@ async function selectChar(idx){
   try{
     const r=await api('select-character',{index:idx});
     if(!r.success){alert(r.error);return;}
+    const c=charsList.find(x=>x.index===idx);
+    activeChar=c?{name:c.name,server:hostOf(c.server)}:null;
     showGuild(r.data);
     goPage('overview');
     const st=await api('status');
@@ -894,6 +907,7 @@ async function restore(){
     st=await api('status');
     if(!st.success||!st.data.logged_in){view='app'; goPage('character'); return;}
     if(!(st.data.guild_loaded&&st.data.own_guild)){view='app'; goPage('character'); return;}
+    activeChar=st.data.character_name?{name:st.data.character_name,server:st.data.character_server||''}:null;
     showGuild(st.data.own_guild);
     view='app'; route();
     applyScanStatus(st.data);

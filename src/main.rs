@@ -1952,7 +1952,11 @@ async fn status(Ctx(handles, _user): Ctx) -> impl IntoResponse {
         has_scan_data: bool,
         scan_date: Option<String>,
         own_guild: Option<OwnGuild>,
+        character_name: Option<String>,
+        character_server: Option<String>,
     }
+
+    let session = app.selected.and_then(|i| app.sessions.get(i));
 
     ok_response(StatusInfo {
         logged_in: !app.sessions.is_empty(),
@@ -1962,6 +1966,8 @@ async fn status(Ctx(handles, _user): Ctx) -> impl IntoResponse {
         has_scan_data: app.scan_data.is_some(),
         scan_date: app.scan_data.as_ref().map(|s| s.scanned_at.clone()),
         own_guild: app.own_guild.clone(),
+        character_name: session.map(|s| s.username().to_string()),
+        character_server: session.and_then(|s| s.server_url().host_str().map(str::to_string)),
     })
 }
 
