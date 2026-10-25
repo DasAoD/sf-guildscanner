@@ -1,0 +1,23 @@
+window.I18N = {
+  de: {
+    'app.title': 'SF Gilden-Scanner',
+    'nav.overview': 'Übersicht',
+    'nav.scan': 'Scan',
+    'nav.results': 'Ergebnisse',
+    'nav.hof': 'Ehrenhalle',
+    'nav.switch': 'Charakter wechseln',
+    'nav.help': 'Hilfe',
+    'nav.logout': 'Abmelden',
+    'nav.group.main': 'Scanner',
+    'nav.group.system': 'System',
+    'page.overview': 'Übersicht',
+    'page.scan': 'Scan',
+    'page.results': 'Ergebnisse',
+    'page.hof': 'Vollständige Ehrenhalle',
+    'page.help': 'Hilfe',
+    'login.user': 'Benutzername',
+    'login.pass': 'Passwort',
+    'login.submit': 'Einloggen',
+    'chars.title': 'Charakter wählen',
+  },
+};
