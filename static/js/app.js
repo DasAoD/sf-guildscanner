@@ -11,7 +11,9 @@ let hasScanData=false, scanDate='';
 // damit die Häkchen nicht bei jedem Neurendern verschwinden.
 let selectedGuilds=new Set();
 
-const PAGES=['overview','scan','results','hof','settings','help'];
+const PAGES=['character','overview','scan','results','hof','users','settings','help'];
+// Seiten, die einen gewählten Charakter (und damit eine Gilde) brauchen
+const NEEDS_GUILD=['overview','scan','results','hof'];
 const MUSH_ICON='<svg class="icon mush"><use href="#i-mush"/></svg>';
 let lastMushrooms='0';
 
@@ -20,21 +22,24 @@ function rowActionsHtml(name){
   const opts=[0,1,2,3].map(n=>`<option value="${n}"${String(n)===lastMushrooms?' selected':''}>${n}</option>`).join('');
   return `<span class="rowact"><select class="rowMush" title="Pilze im Katapult">${opts}</select><button class="btn sec small" type="button" data-g="${esc(name)}" onclick="doSimulateRow(this)" title="Nur diese Gilde mit der gewählten Pilzzahl simulieren"><svg class="icon"><use href="#i-play"/></svg>Sim</button></span>`;
 }
-let view='login';
+let view='boot';
 
 document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=t(el.dataset.i18n);});
 
 // ── ANSICHTEN / NAVIGATION ─────────────────────────────────
 function route(){
-  $('loginView').classList.toggle('hidden',view!=='login');
-  $('charsView').classList.toggle('hidden',view!=='chars');
+  $('authView').classList.toggle('hidden',view!=='auth');
   $('appView').classList.toggle('hidden',view!=='app');
   if(view!=='app')return;
   let page=(location.hash||'#overview').slice(1);
   if(!PAGES.includes(page))page='overview';
+  if(page==='users'&&!(authUser&&authUser.is_admin))page='character';
+  if(NEEDS_GUILD.includes(page)&&!ownGuild)page='character';
   document.querySelectorAll('.page').forEach(p=>p.classList.toggle('show',p.id==='p-'+page));
   document.querySelectorAll('.nbtn[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===page));
   $('side').classList.remove('open');
+  if(page==='users')loadUsers();
+  if(page==='character')loadCharacterPage();
   window.scrollTo(0,0);
 }
 function goPage(page){
@@ -48,6 +53,7 @@ async function api(ep,data){
     ?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})}
     :{};
   const r=await fetch('/api/'+ep,opts);
+  if(r.status===401&&ep!=='auth/login'){showAuth('login');return {success:false,error:'Nicht angemeldet'};}
   return r.json();
 }
 
@@ -68,8 +74,26 @@ async function doLogin(){
 $('pass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 
 // ── CHARACTER ──────────────────────────────────────────────
+function showSso(){
+  $('ssoCard').classList.remove('hidden');
+  $('charCard').classList.add('hidden');
+}
+
+// Zeigt die Charakterliste, falls ein S&F-Login besteht, sonst das Anmeldeformular
+async function loadCharacterPage(){
+  try{
+    const st=await api('status');
+    if(st.success&&st.data.logged_in){
+      const r=await api('characters');
+      if(r.success){showChars(r.data);return;}
+    }
+  }catch(e){/* ohne Antwort bleibt das Anmeldeformular */}
+  showSso();
+}
+
 function showChars(chars){
-  view='chars'; route();
+  $('ssoCard').classList.add('hidden');
+  $('charCard').classList.remove('hidden');
   const l=$('charList'); l.innerHTML='';
   chars.forEach(c=>{
     const b=document.createElement('button');
@@ -116,22 +140,11 @@ async function selectChar(idx){
     const r=await api('select-character',{index:idx});
     if(!r.success){alert(r.error);return;}
     showGuild(r.data);
-    view='app'; location.hash='#overview'; route();
+    goPage('overview');
     const st=await api('status');
     applyScanStatus(st.data);
   }catch(e){alert('Fehler: '+e.message);}
   finally{$('charList').querySelectorAll('button').forEach(b=>b.disabled=false);}
-}
-
-// Wechselt zu einem anderen Charakter auf demselben SSO-Account, ohne
-// sich neu einzuloggen (alle Charaktere sind schon aus dem Login bekannt).
-async function doSwitchCharacter(){
-  try{
-    const r=await api('characters');
-    if(!r.success){alert(r.error);return;}
-    $('modal').classList.add('hidden');
-    showChars(r.data);
-  }catch(e){alert('Fehler: '+e.message);}
 }
 
 // ── TEILNAHME AN DER SIMULATION ────────────────────────────
@@ -214,7 +227,7 @@ function showGuild(g){
   ownGuild=g;
   $('guildName').textContent=g.name;
   $('ovSub').textContent=`Rang #${g.rank}`;
-  $('who').textContent=g.name;
+  $('who').textContent=(authUser?authUser.name+' · ':'')+g.name;
 
   const ownMax=Math.max(...g.members.map(m=>m.level));
   const ownMin=Math.min(...g.members.map(m=>m.level));
@@ -729,7 +742,7 @@ function renderDetail(g){
 
 // ── LOGOUT ─────────────────────────────────────────────────
 async function doLogout(){
-  await api('logout',{});
+  await api('auth/logout',{});
   location.reload();
 }
 
@@ -783,26 +796,122 @@ async function checkUpdate(){
       :'Die neueste Version konnte noch nicht ermittelt werden.';
   }catch(e){/* ohne Netz bleibt der Hinweis einfach aus */}
 }
-loadSettings(); checkUpdate(); setInterval(checkUpdate,30*60*1000);
+
+// ── ANMELDUNG AM SCANNER ───────────────────────────────────
+let authUser=null, authMode='login', appStarted=false;
+
+function showAuth(mode){
+  authMode=mode;
+  authUser=null;
+  $('authPass2Field').classList.toggle('hidden',mode!=='setup');
+  $('authIntro').textContent=mode==='setup'
+    ?'Willkommen! Lege den ersten Benutzer an. Er wird Admin und kann danach weitere Benutzer anlegen.'
+    :'';
+  $('authBtn').textContent=mode==='setup'?'Admin anlegen':'Anmelden';
+  $('authPass').autocomplete=mode==='setup'?'new-password':'current-password';
+  $('authErr').textContent='';
+  view='auth'; route();
+}
+
+async function doAuth(){
+  const name=$('authName').value.trim(), pass=$('authPass').value;
+  if(!name||!pass)return;
+  if(authMode==='setup'&&pass!==$('authPass2').value){$('authErr').textContent='Die Passwörter stimmen nicht überein';return;}
+  $('authBtn').disabled=true; $('authErr').textContent='';
+  try{
+    const r=await api(authMode==='setup'?'auth/setup':'auth/login',{name,password:pass});
+    if(!r.success){$('authErr').textContent=r.error;return;}
+    $('authPass').value=''; $('authPass2').value='';
+    enterApp(r.data);
+  }catch(e){$('authErr').textContent='Verbindungsfehler';}
+  finally{$('authBtn').disabled=false;}
+}
+$('authPass').addEventListener('keydown',e=>{if(e.key==='Enter'&&authMode==='login')doAuth();});
+$('authPass2').addEventListener('keydown',e=>{if(e.key==='Enter')doAuth();});
+
+function enterApp(user){
+  authUser=user;
+  $('who').textContent=user.name;
+  $('navUsers').classList.toggle('hidden',!user.is_admin);
+  $('setUpdate').disabled=!user.is_admin;
+  loadSettings(); checkUpdate();
+  if(!appStarted){appStarted=true; setInterval(checkUpdate,30*60*1000);}
+  restore();
+}
+
+async function boot(){
+  try{
+    const r=await api('auth/state');
+    if(!r.success){showAuth('login');return;}
+    if(r.data.setup_needed){showAuth('setup');return;}
+    if(!r.data.user){showAuth('login');return;}
+    enterApp(r.data.user);
+  }catch(e){showAuth('login');}
+}
+
+// ── BENUTZERVERWALTUNG (Admin) ─────────────────────────────
+async function loadUsers(){
+  const r=await api('admin/users');
+  if(!r.success)return;
+  const tb=$('usersTable').querySelector('tbody'); tb.innerHTML='';
+  r.data.forEach(u=>{
+    const tr=document.createElement('tr');
+    const self=authUser&&u.id===authUser.id;
+    tr.innerHTML=`<td class="name">${esc(u.name)}${self?' <span class="hint">(du)</span>':''}</td>
+      <td>${u.is_admin?'<span class="badge b-gld">Admin</span>':'Benutzer'}</td>
+      <td>${esc(u.created)}</td>
+      <td><span class="rowbtns"><button class="btn sec small" type="button" data-id="${esc(u.id)}" data-name="${esc(u.name)}" onclick="openPwModal(this.dataset.id,this.dataset.name)">Passwort setzen</button>${self?'':`<button class="btn red small" type="button" data-id="${esc(u.id)}" data-name="${esc(u.name)}" onclick="deleteUser(this.dataset.id,this.dataset.name)">Löschen</button>`}</span></td>`;
+    tb.appendChild(tr);
+  });
+}
+
+async function createUser(){
+  const name=$('newUserName').value.trim(), password=$('newUserPass').value;
+  const r=await api('admin/users',{name,password,is_admin:$('newUserAdmin').checked});
+  $('newUserMsg').textContent=r.success?`Benutzer "${r.data.name}" angelegt.`:'Fehler: '+r.error;
+  if(r.success){$('newUserName').value=''; $('newUserPass').value=''; $('newUserAdmin').checked=false; loadUsers();}
+}
+
+async function deleteUser(id,name){
+  if(!confirm(`Benutzer "${name}" samt allen Scan-Daten löschen?`))return;
+  const r=await api('admin/users/delete',{id});
+  if(!r.success)alert(r.error);
+  loadUsers();
+}
+
+function openPwModal(id,name){
+  $('mTitle').textContent=`Passwort setzen: ${name}`;
+  $('mBody').innerHTML=`<div class="form" style="grid-template-columns:1fr"><div class="field"><label for="admPw">Neues Passwort</label><input type="password" id="admPw" autocomplete="new-password"></div></div>
+    <button class="btn" type="button" id="admPwBtn">Setzen</button> <span class="hint" id="admPwMsg">Mindestens 10 Zeichen. Alle Sitzungen des Benutzers enden.</span>`;
+  $('modal').classList.remove('hidden');
+  $('admPwBtn').onclick=async()=>{
+    const r=await api('admin/users/password',{id,password:$('admPw').value});
+    $('admPwMsg').textContent=r.success?'Passwort gesetzt.':'Fehler: '+r.error;
+    if(r.success)setTimeout(()=>$('modal').classList.add('hidden'),900);
+  };
+}
+
+async function changePassword(){
+  if($('pwNew').value!==$('pwNew2').value){$('pwMsg').textContent='Die neuen Passwörter stimmen nicht überein';return;}
+  const r=await api('auth/password',{old:$('pwOld').value,new:$('pwNew').value});
+  $('pwMsg').textContent=r.success?'Passwort geändert.':'Fehler: '+r.error;
+  if(r.success){$('pwOld').value=''; $('pwNew').value=''; $('pwNew2').value='';}
+}
 
 initColMenus();
 
 // Nach einem Seiten-Refresh hält der Server die Sitzung noch: Zustand
 // wiederherstellen statt wieder den Login zu zeigen.
-(async function restore(){
+async function restore(){
   let st;
   try{
     st=await api('status');
-    if(!st.success||!st.data.logged_in)return;
-    if(!(st.data.guild_loaded&&st.data.own_guild)){
-      const r=await api('characters');
-      if(r.success)showChars(r.data);
-      return;
-    }
+    if(!st.success||!st.data.logged_in){view='app'; goPage('character'); return;}
+    if(!(st.data.guild_loaded&&st.data.own_guild)){view='app'; goPage('character'); return;}
     showGuild(st.data.own_guild);
     view='app'; route();
     applyScanStatus(st.data);
-  }catch(e){console.error('Wiederherstellung fehlgeschlagen',e);return;}
+  }catch(e){console.error('Wiederherstellung fehlgeschlagen',e); view='app'; goPage('character'); return;}
 
   try{
     if(st.data.has_scan_data)await applyFilter();
@@ -819,6 +928,7 @@ initColMenus();
       pollSimProgress();
     }
   }catch(e){console.error('Laufende Aufgaben konnten nicht wiederhergestellt werden',e);}
-})();
+}
 
 route();
+boot();

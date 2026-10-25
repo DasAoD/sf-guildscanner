@@ -24,24 +24,19 @@
 </svg>
 
 <!-- LOGIN -->
-<div class="login-wrap" id="loginView">
+<!-- ANMELDUNG AM SCANNER -->
+<div class="login-wrap hidden" id="authView">
   <div class="card login">
     <h1 data-i18n="app.title"></h1>
     <div class="ver"><span class="appVersion"></span></div>
+    <p class="hint" id="authIntro"></p>
     <div class="form" style="grid-template-columns:1fr">
-      <div class="field"><label for="user" data-i18n="login.user"></label><input type="text" id="user" autocomplete="username"></div>
-      <div class="field"><label for="pass" data-i18n="login.pass"></label><input type="password" id="pass" autocomplete="current-password"></div>
+      <div class="field"><label for="authName" data-i18n="auth.name"></label><input type="text" id="authName" autocomplete="username"></div>
+      <div class="field"><label for="authPass" data-i18n="auth.pass"></label><input type="password" id="authPass" autocomplete="current-password"></div>
+      <div class="field hidden" id="authPass2Field"><label for="authPass2" data-i18n="auth.pass2"></label><input type="password" id="authPass2" autocomplete="new-password"></div>
     </div>
-    <button class="btn" id="loginBtn" type="button" onclick="doLogin()" data-i18n="login.submit"></button>
-    <div id="loginErr" class="err"></div>
-  </div>
-</div>
-
-<!-- CHARAKTERWAHL -->
-<div class="login-wrap hidden" id="charsView">
-  <div class="card login">
-    <h1 data-i18n="chars.title"></h1>
-    <div class="char-list" id="charList"></div>
+    <button class="btn" id="authBtn" type="button" onclick="doAuth()"></button>
+    <div id="authErr" class="err"></div>
   </div>
 </div>
 
@@ -70,7 +65,8 @@
 
       <nav class="nav">
         <div class="nav-label" data-i18n="nav.group.system"></div>
-        <button class="nbtn" type="button" onclick="doSwitchCharacter()"><svg class="icon"><use href="#i-users"/></svg><span data-i18n="nav.switch"></span></button>
+        <a class="nbtn" data-page="character" href="#character"><svg class="icon"><use href="#i-users"/></svg><span data-i18n="nav.switch"></span></a>
+        <a class="nbtn hidden" id="navUsers" data-page="users" href="#users"><svg class="icon"><use href="#i-users"/></svg><span data-i18n="nav.users"></span></a>
         <a class="nbtn" data-page="settings" href="#settings"><svg class="icon"><use href="#i-gear"/></svg><span data-i18n="nav.settings"></span></a>
         <a class="nbtn" data-page="help" href="#help"><svg class="icon"><use href="#i-help"/></svg><span data-i18n="nav.help"></span></a>
         <button class="nbtn danger" type="button" onclick="doLogout()"><svg class="icon"><use href="#i-out"/></svg><span data-i18n="nav.logout"></span></button>
@@ -79,6 +75,25 @@
     </aside>
 
     <main class="main">
+
+      <!-- CHARAKTER (S&F-Anmeldung und Charakterwahl) -->
+      <section class="page" id="p-character">
+        <div class="page-head"><h2 data-i18n="page.character"></h2><span class="sub">Spielkonto und Charakter</span></div>
+        <div class="card" id="ssoCard">
+          <h3>S&amp;F-Anmeldung</h3>
+          <p class="hint">Dein Konto beim Spiel (SSO). Die Zugangsdaten bleiben nur im Arbeitsspeicher und werden nicht gespeichert.</p>
+          <div class="form">
+            <div class="field"><label for="user" data-i18n="login.user"></label><input type="text" id="user" autocomplete="username"></div>
+            <div class="field"><label for="pass" data-i18n="login.pass"></label><input type="password" id="pass" autocomplete="current-password"></div>
+          </div>
+          <button class="btn" id="loginBtn" type="button" onclick="doLogin()" data-i18n="login.submit"></button>
+          <div id="loginErr" class="err"></div>
+        </div>
+        <div class="card hidden" id="charCard">
+          <h3 data-i18n="chars.title"></h3>
+          <div class="char-list" id="charList"></div>
+        </div>
+      </section>
 
       <!-- ÜBERSICHT -->
       <section class="page" id="p-overview">
@@ -242,6 +257,35 @@
           <p class="hint" id="setUpdateMsg">Fragt die Tags auf Docker Hub ab und zeigt neben der Versionsnummer einen Hinweis. Das Update selbst machst du in Unraid.</p>
           <p class="hint" id="updStatus"></p>
         </div>
+        <div class="card">
+          <h3>Passwort ändern</h3>
+          <div class="form">
+            <div class="field"><label for="pwOld">Bisheriges Passwort</label><input type="password" id="pwOld" autocomplete="current-password"></div>
+            <div class="field"><label for="pwNew">Neues Passwort</label><input type="password" id="pwNew" autocomplete="new-password"></div>
+            <div class="field"><label for="pwNew2">Neues Passwort wiederholen</label><input type="password" id="pwNew2" autocomplete="new-password"></div>
+          </div>
+          <button class="btn" type="button" onclick="changePassword()">Passwort ändern</button>
+          <p class="hint" id="pwMsg">Mindestens 10 Zeichen. Andere angemeldete Geräte werden dabei abgemeldet.</p>
+        </div>
+      </section>
+
+      <!-- BENUTZER (nur Admin) -->
+      <section class="page" id="p-users">
+        <div class="page-head"><h2 data-i18n="page.users"></h2><span class="sub">Zugänge zum Scanner</span></div>
+        <div class="card">
+          <h3>Neuen Benutzer anlegen</h3>
+          <div class="form">
+            <div class="field"><label for="newUserName">Benutzername</label><input type="text" id="newUserName" autocomplete="off"></div>
+            <div class="field"><label for="newUserPass">Startpasswort</label><input type="password" id="newUserPass" autocomplete="new-password"></div>
+          </div>
+          <div class="form"><label class="check"><input type="checkbox" id="newUserAdmin"><span>Admin<small>Darf Benutzer verwalten und Server-Einstellungen ändern</small></span></label></div>
+          <button class="btn" type="button" onclick="createUser()">Anlegen</button>
+          <p class="hint" id="newUserMsg">Mindestens 10 Zeichen. Der Benutzer sollte das Passwort nach dem ersten Login unter Einstellungen ändern.</p>
+        </div>
+        <div class="card">
+          <h3>Benutzer</h3>
+          <div class="tablewrap"><table id="usersTable"><thead><tr><th>Name</th><th>Rolle</th><th>Angelegt</th><th></th></tr></thead><tbody></tbody></table></div>
+        </div>
       </section>
 
       <!-- HILFE -->
@@ -255,6 +299,7 @@
           <details><summary>Top-N Strikt</summary><p>Vergleicht die Gegner mit euren besten N kampfbereiten Mitgliedern, wobei N die Mitgliederzahl der Gegnergilde ist.</p></details>
           <details><summary>Komplette Ehrenhalle bis Rang 1</summary><p>Scannt die gesamte Ehrenhalle bis Rang 1 ohne Ehre-Filter. Es werden nur Ehrenhalle-Seiten abgerufen, deshalb ist das auch bei hohem eigenen Rang vertretbar. Überschreibt den Honor-Up-Scan.</p></details>
           <details><summary>Kampfbereit</summary><p>Kampfbereit sind Mitglieder, die in den letzten 24 Stunden online waren und für den Angriff angemeldet sind. Eingeladene Spieler zählen nie. Nur kampfbereite Mitglieder treten in der Simulation für euch an.</p></details>
+          <details><summary>Benutzer und Anmeldung</summary><p>Der Scanner hat eigene Benutzer. Der erste Benutzer ist der Admin und legt unter "Benutzer" weitere an. Jeder sieht nur seine eigenen Scans. Die Anmeldung bleibt 30 Tage bestehen und verlängert sich bei Nutzung. Nach mehreren falschen Passwörtern wird der Login zeitweise gebremst. Das eigene Passwort änderst du unter Einstellungen.</p></details>
           <details><summary>Update-Hinweis</summary><p>Der Server fragt in dem unter Einstellungen gewählten Abstand bei Docker Hub nach der neuesten Version. Gibt es eine neuere, erscheint in der Leiste neben der Versionsnummer ein Hinweis. Aktualisiert wird der Container selbst, zum Beispiel in Unraid.</p></details>
           <details><summary>Pilze und Simulation</summary><p>Anzahl der geladenen Riesenpilze im Pilzkatapult (0 bis 3). Jeder Pilz trifft ein zufälliges Gegnermitglied und zieht ihm die Hälfte seines Lebens ab; zwei Treffer auf dasselbe Ziel lassen nichts übrig. Die Quote ist der Anteil gewonnener Kämpfe bei 2500 Durchläufen.</p></details>
         </div>

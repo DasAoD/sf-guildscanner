@@ -225,3 +225,5 @@ th .arrow { font-size: 0.7rem; opacity: 0.7; }
 }
 .colhide { display: none; }
 .partInfo a { color: var(--gold); }
+
+.rowbtns { display: inline-flex; gap: 0.3rem; }

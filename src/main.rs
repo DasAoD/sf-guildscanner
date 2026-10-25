@@ -1,14 +1,18 @@
+mod auth;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
     Json, Router,
-    extract::State,
-    http::{HeaderValue, StatusCode, header},
-    response::IntoResponse,
+    extract::{FromRequestParts, Request, State},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header, request::Parts},
+    middleware::{Next, from_fn},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
+use auth::{Auth, AuthUser, LoginError};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tower_http::{services::ServeDir, set_header::SetResponseHeader};
@@ -273,6 +277,47 @@ struct AppHandles {
     state: SharedState,
     progress: SharedProgress,
     meta: SharedMeta,
+    /// Datenordner dieses Benutzers (Scans und Verlauf)
+    user_dir: String,
+}
+
+/// Zustand für alle Benutzer: Anmeldung, pro Benutzer ein eigener
+/// `AppHandles`-Satz und die serverweiten Einstellungen.
+#[derive(Clone)]
+struct Shared {
+    auth: Arc<Auth>,
+    users: Arc<Mutex<HashMap<String, AppHandles>>>,
+    meta: SharedMeta,
+    /// X-Forwarded-For auswerten (Scanner steht hinter einem eigenen Reverse-Proxy)
+    trust_proxy: bool,
+}
+
+fn new_app_state() -> AppState {
+    AppState {
+        sessions: Vec::new(),
+        selected: None,
+        own_guild: None,
+        scan_data: None,
+        scan_settings: ScanSettings::default(),
+        own_fighters_cache: None,
+        enemy_fighters_cache: HashMap::new(),
+    }
+}
+
+impl Shared {
+    /// Zustand eines Benutzers; wird beim ersten Zugriff angelegt.
+    async fn handles_for(&self, user_id: &str) -> AppHandles {
+        let mut users = self.users.lock().await;
+        users
+            .entry(user_id.to_string())
+            .or_insert_with(|| AppHandles {
+                state: Arc::new(Mutex::new(new_app_state())),
+                progress: Arc::new(Mutex::new(ProgressState::default())),
+                meta: self.meta.clone(),
+                user_dir: format!("{}/users/{}", DATA_DIR, user_id),
+            })
+            .clone()
+    }
 }
 
 // ── API Request/Response Types ───────────────────────────────────────────────
@@ -455,9 +500,264 @@ fn is_attackable(own_rank: u32, own_honor: u32, guild_rank: u32, guild_honor: u3
 //  Handlers
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ── Benutzer-Login ───────────────────────────────────────────────────────────
+
+fn status_err<T: Serialize>(code: StatusCode, msg: &str) -> (StatusCode, Json<ApiResponse<T>>) {
+    (
+        code,
+        Json(ApiResponse {
+            success: false,
+            data: None,
+            error: Some(msg.to_string()),
+        }),
+    )
+}
+
+fn session_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(auth::token_from_cookie_header)
+}
+
+/// Adresse des Clients aus X-Forwarded-For, nur mit SFGS_TRUST_PROXY=true (sonst
+/// kann der Client den Header fälschen). Es zählt der letzte Eintrag, den der
+/// eigene Proxy anhängt. Dient nur der Login-Drosselung; die Drosselung pro
+/// Benutzername greift auch ohne.
+fn client_ip(headers: &HeaderMap, trust_proxy: bool) -> Option<String> {
+    if !trust_proxy {
+        return None;
+    }
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next_back())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn with_cookie<T: Serialize>(cookie: &str, body: Json<ApiResponse<T>>) -> Response {
+    let mut resp = body.into_response();
+    if let Ok(v) = HeaderValue::from_str(cookie) {
+        resp.headers_mut().append(header::SET_COOKIE, v);
+    }
+    resp
+}
+
+/// Schreibende Anfragen, die der Browser als seitenübergreifend kennzeichnet,
+/// werden abgelehnt (zusätzlich zu SameSite=Lax am Cookie).
+async fn csrf_guard(req: Request, next: Next) -> Response {
+    let safe = matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
+    if !safe {
+        let site = req.headers().get("sec-fetch-site").and_then(|v| v.to_str().ok());
+        if matches!(site, Some(s) if s != "same-origin" && s != "none") {
+            return status_err::<String>(StatusCode::FORBIDDEN, "Anfrage von fremder Seite abgelehnt")
+                .into_response();
+        }
+    }
+    next.run(req).await
+}
+
+/// Eingeloggter Benutzer mit seinem eigenen Zustand (Scan, Caches, Fortschritt).
+struct Ctx(AppHandles, AuthUser);
+
+#[axum::async_trait]
+impl FromRequestParts<Shared> for Ctx {
+    type Rejection = (StatusCode, Json<ApiResponse<String>>);
+
+    async fn from_request_parts(parts: &mut Parts, shared: &Shared) -> Result<Self, Self::Rejection> {
+        let user = session_token(&parts.headers)
+            .and_then(|t| shared.auth.user_for_token(&t))
+            .ok_or_else(|| status_err(StatusCode::UNAUTHORIZED, "Nicht angemeldet"))?;
+        let handles = shared.handles_for(&user.id).await;
+        Ok(Ctx(handles, user))
+    }
+}
+
+#[derive(Serialize)]
+struct AuthState {
+    setup_needed: bool,
+    user: Option<AuthUser>,
+}
+
+/// GET /api/auth/state – öffentlich: braucht die Oberfläche zum Start
+async fn auth_state(State(shared): State<Shared>, headers: HeaderMap) -> impl IntoResponse {
+    let user = session_token(&headers).and_then(|t| shared.auth.user_for_token(&t));
+    ok_response(AuthState { setup_needed: shared.auth.needs_setup(), user })
+}
+
+#[derive(Deserialize)]
+struct Credentials {
+    name: String,
+    password: String,
+}
+
+/// POST /api/auth/setup – ersten Admin anlegen (nur solange es keinen Benutzer gibt)
+async fn auth_setup(State(shared): State<Shared>, Json(req): Json<Credentials>) -> Response {
+    match shared.auth.setup(&req.name, &req.password).await {
+        Ok((user, token)) => with_cookie(&shared.auth.session_cookie(&token), ok_response(user)),
+        Err(e) => status_err::<AuthUser>(StatusCode::BAD_REQUEST, &e).into_response(),
+    }
+}
+
+/// POST /api/auth/login
+async fn auth_login(State(shared): State<Shared>, headers: HeaderMap, Json(req): Json<Credentials>) -> Response {
+    match shared.auth.login(&req.name, &req.password, client_ip(&headers, shared.trust_proxy).as_deref()).await {
+        Ok((user, token)) => with_cookie(&shared.auth.session_cookie(&token), ok_response(user)),
+        Err(LoginError::Throttled(secs)) => status_err::<AuthUser>(
+            StatusCode::TOO_MANY_REQUESTS,
+            &format!("Zu viele Fehlversuche, bitte in {} Sekunden erneut versuchen", secs),
+        )
+        .into_response(),
+        Err(LoginError::Invalid) => {
+            status_err::<AuthUser>(StatusCode::UNAUTHORIZED, "Benutzername oder Passwort falsch").into_response()
+        }
+    }
+}
+
+/// POST /api/auth/logout – beendet die Sitzung und den S&F-Login des Benutzers
+async fn auth_logout(State(shared): State<Shared>, headers: HeaderMap) -> Response {
+    if let Some(token) = session_token(&headers) {
+        if let Some(user) = shared.auth.user_for_token(&token) {
+            let handles = shared.handles_for(&user.id).await;
+            clear_sso(&handles).await;
+        }
+        shared.auth.logout(&token);
+    }
+    with_cookie(&shared.auth.clear_cookie(), ok_response("Abgemeldet"))
+}
+
+#[derive(Deserialize)]
+struct PasswordChange {
+    old: String,
+    new: String,
+}
+
+/// POST /api/auth/password – eigenes Passwort ändern
+async fn auth_password(
+    State(shared): State<Shared>,
+    Ctx(_, user): Ctx,
+    headers: HeaderMap,
+    Json(req): Json<PasswordChange>,
+) -> impl IntoResponse {
+    let token = session_token(&headers).unwrap_or_default();
+    match shared.auth.change_password(&user.id, &token, &req.old, &req.new).await {
+        Ok(()) => Ok(ok_response("Passwort geändert")),
+        Err(e) => Err(err_response::<String>(&e)),
+    }
+}
+
+type ApiErr = (StatusCode, Json<ApiResponse<String>>);
+
+fn require_admin(user: &AuthUser) -> Result<(), ApiErr> {
+    if user.is_admin {
+        Ok(())
+    } else {
+        Err(status_err(StatusCode::FORBIDDEN, "Nur für Admins"))
+    }
+}
+
+/// GET /api/admin/users
+async fn admin_list_users(
+    State(shared): State<Shared>,
+    Ctx(_, user): Ctx,
+) -> Result<Json<ApiResponse<Vec<auth::UserInfo>>>, ApiErr> {
+    require_admin(&user)?;
+    Ok(ok_response(shared.auth.list_users()))
+}
+
+#[derive(Deserialize)]
+struct NewUser {
+    name: String,
+    password: String,
+    #[serde(default)]
+    is_admin: bool,
+}
+
+/// POST /api/admin/users
+async fn admin_create_user(
+    State(shared): State<Shared>,
+    Ctx(_, user): Ctx,
+    Json(req): Json<NewUser>,
+) -> Result<Json<ApiResponse<auth::UserInfo>>, ApiErr> {
+    require_admin(&user)?;
+    shared
+        .auth
+        .create_user(&req.name, &req.password, req.is_admin)
+        .await
+        .map(ok_response)
+        .map_err(|e| err_response::<String>(&e))
+}
+
+#[derive(Deserialize)]
+struct UserId {
+    id: String,
+}
+
+/// POST /api/admin/users/delete – Benutzer samt seinen Scan-Daten löschen
+async fn admin_delete_user(
+    State(shared): State<Shared>,
+    Ctx(_, user): Ctx,
+    Json(req): Json<UserId>,
+) -> Result<Json<ApiResponse<&'static str>>, ApiErr> {
+    require_admin(&user)?;
+    shared.auth.delete_user(&req.id, &user.id).map_err(|e| err_response::<String>(&e))?;
+    // Laufende Scans/Simulationen abbrechen und den S&F-Login des Benutzers verwerfen
+    let removed = shared.users.lock().await.remove(&req.id);
+    if let Some(h) = removed {
+        {
+            let mut p = h.progress.lock().await;
+            p.cancel_scan = true;
+            p.cancel_sim = true;
+        }
+        clear_sso(&h).await;
+        // Auf das Ende laufender Aufgaben warten, sonst legen sie den Ordner beim
+        // Speichern wieder an.
+        for _ in 0..40 {
+            let (scan, sim) = {
+                let p = h.progress.lock().await;
+                (p.scan.running, p.sim.running)
+            };
+            if !scan && !sim {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+    // delete_user hat nur existierende (vom Server erzeugte) IDs akzeptiert
+    let dir = format!("{}/users/{}", DATA_DIR, req.id);
+    if let Err(e) = std::fs::remove_dir_all(&dir) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            log::warn!("Datenordner {} konnte nicht gelöscht werden: {}", dir, e);
+        }
+    }
+    Ok(ok_response("Benutzer gelöscht"))
+}
+
+#[derive(Deserialize)]
+struct SetPassword {
+    id: String,
+    password: String,
+}
+
+/// POST /api/admin/users/password
+async fn admin_set_password(
+    State(shared): State<Shared>,
+    Ctx(_, user): Ctx,
+    Json(req): Json<SetPassword>,
+) -> Result<Json<ApiResponse<&'static str>>, ApiErr> {
+    require_admin(&user)?;
+    shared
+        .auth
+        .set_password(&req.id, &req.password)
+        .await
+        .map(|_| ok_response("Passwort gesetzt"))
+        .map_err(|e| err_response::<String>(&e))
+}
+
 /// POST /api/login
 async fn login(
-    State(handles): State<AppHandles>,
+    Ctx(handles, _user): Ctx,
     Json(req): Json<LoginRequest>,
 ) -> impl IntoResponse {
     log::info!("SSO login for: {}", req.username);
@@ -505,7 +805,7 @@ async fn login(
 /// GET /api/characters – Liste der bereits per SSO geladenen Charaktere,
 /// ohne erneuten Login. Ermöglicht den Wechsel zu einem anderen Charakter
 /// auf demselben Account, ohne sich neu einzuloggen.
-async fn list_characters(State(handles): State<AppHandles>) -> impl IntoResponse {
+async fn list_characters(Ctx(handles, _user): Ctx) -> impl IntoResponse {
     let app = handles.state.lock().await;
 
     if app.sessions.is_empty() {
@@ -528,7 +828,7 @@ async fn list_characters(State(handles): State<AppHandles>) -> impl IntoResponse
 
 /// POST /api/select-character
 async fn select_character(
-    State(handles): State<AppHandles>,
+    Ctx(handles, _user): Ctx,
     Json(req): Json<SelectCharRequest>,
 ) -> impl IntoResponse {
     let mut app = handles.state.lock().await;
@@ -627,7 +927,7 @@ async fn select_character(
                 // Try to load existing scan data
                 // (server url was captured before we mutated app state)
                 let server = server.clone();
-                if let Ok(data) = load_scan_data(&server, &info.name) {
+                if let Ok(data) = load_scan_data(&handles.user_dir, &server, &info.name) {
                     log::info!("Loaded existing scan from {}", data.scanned_at);
                     app.scan_data = Some(data);
                 }
@@ -645,7 +945,7 @@ async fn select_character(
 
 /// POST /api/scan – Start scan around our rank (runs in background)
 async fn start_scan(
-    State(handles): State<AppHandles>,
+    Ctx(handles, _user): Ctx,
     Json(req): Json<ScanRequest>,
 ) -> impl IntoResponse {
     {
@@ -703,7 +1003,7 @@ async fn start_scan(
 }
 
 /// POST /api/scan/abort – Request cancellation of a running scan
-async fn abort_scan(State(handles): State<AppHandles>) -> impl IntoResponse {
+async fn abort_scan(Ctx(handles, _user): Ctx) -> impl IntoResponse {
     let mut p = handles.progress.lock().await;
 
     if !p.scan.running {
@@ -1195,7 +1495,7 @@ async fn run_scan(handles: AppHandles) -> Result<(), String> {
         detailed_guilds,
     };
 
-    if let Err(e) = save_scan_data(&scan_data) {
+    if let Err(e) = save_scan_data(&handles.user_dir, &scan_data) {
         log::error!("Failed to save scan data: {}", e);
     }
 
@@ -1225,14 +1525,14 @@ async fn run_scan(handles: AppHandles) -> Result<(), String> {
 }
 
 /// GET /api/progress – Poll scan progress
-async fn get_progress(State(handles): State<AppHandles>) -> impl IntoResponse {
+async fn get_progress(Ctx(handles, _user): Ctx) -> impl IntoResponse {
     let p = handles.progress.lock().await;
     ok_response(p.scan.clone())
 }
 
 /// POST /api/results – Get filtered results
 async fn get_results(
-    State(handles): State<AppHandles>,
+    Ctx(handles, _user): Ctx,
     Json(filter): Json<FilterRequest>,
 ) -> impl IntoResponse {
     let app = handles.state.lock().await;
@@ -1327,7 +1627,7 @@ async fn get_results(
 
 /// POST /api/guild-details – View details of a specific guild (live request)
 async fn guild_details(
-    State(handles): State<AppHandles>,
+    Ctx(handles, _user): Ctx,
     Json(req): Json<GuildDetailRequest>,
 ) -> impl IntoResponse {
     // First check if we already have it in scan data
@@ -1524,7 +1824,7 @@ async fn fetch_latest_version() -> Result<String, String> {
 }
 
 /// GET /api/settings
-async fn get_settings(State(handles): State<AppHandles>) -> impl IntoResponse {
+async fn get_settings(Ctx(handles, _user): Ctx) -> impl IntoResponse {
     let meta = handles.meta.lock().await;
     ok_response(meta.settings.clone())
 }
@@ -1536,9 +1836,12 @@ struct SettingsRequest {
 
 /// POST /api/settings
 async fn set_settings(
-    State(handles): State<AppHandles>,
+    Ctx(handles, user): Ctx,
     Json(req): Json<SettingsRequest>,
 ) -> impl IntoResponse {
+    if !user.is_admin {
+        return Err(status_err::<AppSettings>(StatusCode::FORBIDDEN, "Nur für Admins"));
+    }
     if !valid_update_check(&req.update_check) {
         return Err(err_response::<AppSettings>("Ungültiger Wert für update_check"));
     }
@@ -1563,7 +1866,7 @@ struct UpdateInfo {
 
 /// GET /api/update-check – fragt Docker Hub nur, wenn der letzte Abruf älter
 /// als das eingestellte Intervall ist.
-async fn update_check(State(handles): State<AppHandles>) -> impl IntoResponse {
+async fn update_check(Ctx(handles, _user): Ctx) -> impl IntoResponse {
     let current = app_version();
     let url = format!("https://hub.docker.com/r/{}/tags", IMAGE_REPO);
 
@@ -1637,7 +1940,7 @@ mod tests {
 }
 
 /// GET /api/status
-async fn status(State(handles): State<AppHandles>) -> impl IntoResponse {
+async fn status(Ctx(handles, _user): Ctx) -> impl IntoResponse {
     let app = handles.state.lock().await;
 
     #[derive(Serialize)]
@@ -1663,7 +1966,13 @@ async fn status(State(handles): State<AppHandles>) -> impl IntoResponse {
 }
 
 /// POST /api/logout
-async fn logout(State(handles): State<AppHandles>) -> impl IntoResponse {
+async fn logout(Ctx(handles, _user): Ctx) -> impl IntoResponse {
+    clear_sso(&handles).await;
+    ok_response("Ausgeloggt")
+}
+
+/// S&F-Login und alles, was daran hängt, aus dem Zustand des Benutzers entfernen
+async fn clear_sso(handles: &AppHandles) {
     {
         let mut app = handles.state.lock().await;
         app.sessions.clear();
@@ -1678,11 +1987,10 @@ async fn logout(State(handles): State<AppHandles>) -> impl IntoResponse {
         p.scan = ScanProgress::default();
         p.sim = SimProgress::default();
     }
-    ok_response("Ausgeloggt")
 }
 
 /// GET /api/export – Export scan data as JSON download
-async fn export_data(State(handles): State<AppHandles>) -> impl IntoResponse {
+async fn export_data(Ctx(handles, _user): Ctx) -> impl IntoResponse {
     let app = handles.state.lock().await;
     match &app.scan_data {
         Some(data) => {
@@ -2082,7 +2390,7 @@ async fn simulate_one_guild(
 
 /// POST /api/simulate – Start battle simulation for selected guilds (runs in background)
 async fn start_simulate(
-    State(handles): State<AppHandles>,
+    Ctx(handles, _user): Ctx,
     Json(req): Json<SimulateRequest>,
 ) -> impl IntoResponse {
     if req.guild_names.is_empty() {
@@ -2206,7 +2514,7 @@ async fn run_simulate(
                     g.sim_evaluated_at = Some(now.clone());
                 }
             }
-            if let Err(e) = save_scan_data(scan) {
+            if let Err(e) = save_scan_data(&handles.user_dir, scan) {
                 log::error!("Failed to save scan data after simulation: {}", e);
             }
         }
@@ -2231,7 +2539,7 @@ async fn run_simulate(
 }
 
 /// POST /api/simulate/abort – Request cancellation of a running simulation
-async fn abort_simulate(State(handles): State<AppHandles>) -> impl IntoResponse {
+async fn abort_simulate(Ctx(handles, _user): Ctx) -> impl IntoResponse {
     let mut p = handles.progress.lock().await;
     if !p.sim.running {
         return ok_response("Keine laufende Simulation".to_string());
@@ -2241,14 +2549,14 @@ async fn abort_simulate(State(handles): State<AppHandles>) -> impl IntoResponse 
 }
 
 /// GET /api/simulate/progress – Poll simulation progress
-async fn get_sim_progress(State(handles): State<AppHandles>) -> impl IntoResponse {
+async fn get_sim_progress(Ctx(handles, _user): Ctx) -> impl IntoResponse {
     let p = handles.progress.lock().await;
     ok_response(p.sim.clone())
 }
 
 /// POST /api/refresh-own-fighters – Force-refresh the own-fighters cache,
 /// ignoring TTL and roster-change detection.
-async fn refresh_own_fighters_endpoint(State(handles): State<AppHandles>) -> impl IntoResponse {
+async fn refresh_own_fighters_endpoint(Ctx(handles, _user): Ctx) -> impl IntoResponse {
     {
         let app = handles.state.lock().await;
         if app.selected.is_none() {
@@ -2273,9 +2581,8 @@ async fn refresh_own_fighters_endpoint(State(handles): State<AppHandles>) -> imp
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const DATA_DIR: &str = "/app/data";
-const HISTORY_DIR: &str = "/app/data/history";
 
-fn scan_file_path(server: &str, guild_name: &str) -> String {
+fn scan_file_path(dir: &str, server: &str, guild_name: &str) -> String {
     let server_clean = server
         .replace("https://", "")
         .replace("http://", "")
@@ -2283,24 +2590,23 @@ fn scan_file_path(server: &str, guild_name: &str) -> String {
         .replace(':', "_");
     let guild_clean = guild_name
         .replace(['/', '\\', ' '], "_");
-    format!("{}/scan_{}_{}.json", DATA_DIR, server_clean, guild_clean)
+    format!("{}/scan_{}_{}.json", dir, server_clean, guild_clean)
 }
 
-fn history_file_path(server: &str, guild_name: &str, ts: &str) -> String {
+fn history_file_path(dir: &str, server: &str, guild_name: &str, ts: &str) -> String {
     let server_clean = server
         .replace("https://", "")
         .replace("http://", "")
         .replace('/', "_")
         .replace(':', "_");
     let guild_clean = guild_name.replace(['/', '\\', ' '], "_");
-    format!("{}/scan_{}_{}_{}.json", HISTORY_DIR, server_clean, guild_clean, ts)
+    format!("{}/history/scan_{}_{}_{}.json", dir, server_clean, guild_clean, ts)
 }
 
-fn save_scan_data(data: &ScanData) -> Result<(), String> {
-    std::fs::create_dir_all(DATA_DIR).map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(HISTORY_DIR).map_err(|e| e.to_string())?;
+fn save_scan_data(dir: &str, data: &ScanData) -> Result<(), String> {
+    std::fs::create_dir_all(format!("{}/history", dir)).map_err(|e| e.to_string())?;
 
-    let latest_path = scan_file_path(&data.server, &data.own_guild.name);
+    let latest_path = scan_file_path(dir, &data.server, &data.own_guild.name);
     let json = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
 
     // latest (stable filename)
@@ -2309,15 +2615,15 @@ fn save_scan_data(data: &ScanData) -> Result<(), String> {
 
     // history (timestamped)
     let ts = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let hist_path = history_file_path(&data.server, &data.own_guild.name, &ts);
+    let hist_path = history_file_path(dir, &data.server, &data.own_guild.name, &ts);
     std::fs::write(&hist_path, &json).map_err(|e| e.to_string())?;
     log::info!("Scan data archived to {}", hist_path);
 
     Ok(())
 }
 
-fn load_scan_data(server: &str, guild_name: &str) -> Result<ScanData, String> {
-    let path = scan_file_path(server, guild_name);
+fn load_scan_data(dir: &str, server: &str, guild_name: &str) -> Result<ScanData, String> {
+    let path = scan_file_path(dir, server, guild_name);
     let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     serde_json::from_str(&json).map_err(|e| e.to_string())
 }
@@ -2333,22 +2639,24 @@ async fn main() {
     )
     .init();
 
-    let state: SharedState = Arc::new(Mutex::new(AppState {
-        sessions: Vec::new(),
-        selected: None,
-        own_guild: None,
-        scan_data: None,
-        scan_settings: ScanSettings::default(),
-        own_fighters_cache: None,
-        enemy_fighters_cache: HashMap::new(),
-    }));
-    let progress: SharedProgress = Arc::new(Mutex::new(ProgressState::default()));
     let meta: SharedMeta = Arc::new(Mutex::new(MetaState {
         settings: load_settings(),
         latest: None,
         checked_at: None,
     }));
-    let handles = AppHandles { state, progress, meta };
+    // Hinter dem HTTPS-Reverse-Proxy bleibt das Cookie `Secure`; nur für lokale
+    // Tests über http mit SFGS_COOKIE_SECURE=false abschaltbar.
+    let cookie_secure = std::env::var("SFGS_COOKIE_SECURE").map(|v| v != "false").unwrap_or(true);
+    let auth = Arc::new(Auth::new(DATA_DIR, cookie_secure));
+    if auth.needs_setup() {
+        log::warn!("Noch kein Benutzer vorhanden: Die Einrichtung (erster Admin) ist über die Weboberfläche offen, bitte sofort durchführen");
+    }
+    let shared = Shared {
+        auth,
+        users: Arc::new(Mutex::new(HashMap::new())),
+        meta,
+        trust_proxy: std::env::var("SFGS_TRUST_PROXY").map(|v| v == "true").unwrap_or(false),
+    };
 
     let app = Router::new()
         .route("/api/login", post(login))
@@ -2364,6 +2672,14 @@ async fn main() {
         .route("/api/simulate/progress", get(get_sim_progress))
         .route("/api/refresh-own-fighters", post(refresh_own_fighters_endpoint))
         .route("/api/version", get(get_version))
+        .route("/api/auth/state", get(auth_state))
+        .route("/api/auth/setup", post(auth_setup))
+        .route("/api/auth/login", post(auth_login))
+        .route("/api/auth/logout", post(auth_logout))
+        .route("/api/auth/password", post(auth_password))
+        .route("/api/admin/users", get(admin_list_users).post(admin_create_user))
+        .route("/api/admin/users/delete", post(admin_delete_user))
+        .route("/api/admin/users/password", post(admin_set_password))
         .route("/api/settings", get(get_settings).post(set_settings))
         .route("/api/update-check", get(update_check))
         .route("/api/status", get(status))
@@ -2377,7 +2693,8 @@ async fn main() {
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-cache"),
         ))
-        .with_state(handles);
+        .layer(from_fn(csrf_guard))
+        .with_state(shared);
 
     let addr = "0.0.0.0:8080";
     log::info!("⚔️  SF Guild Scanner on http://{}", addr);

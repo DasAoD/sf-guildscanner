@@ -13,7 +13,7 @@ Findet angreifbare Gilden in Shakes & Fidget – basierend auf Mitgliederanzahl 
 
 ### Scan-Ablauf (vollautomatisch)
 
-1. **Login** per SSO → Charakter auswählen → Gildendaten laden
+1. **Anmelden** am Scanner, dann **S&F-Login** per SSO → Charakter auswählen → Gildendaten laden
 2. **Phase 1 – HoF-Scan**: Scannt die komplette Gilden-Ehrenhalle und ermittelt alle Gilden mit Rang, Ehre, Mitgliederzahl
 3. **Automatische Filterung**: Markiert alle angreifbaren Gilden nach der Spielregel:
    - Alle Gilden **unter** euch (höherer Rang) → angreifbar
@@ -56,6 +56,19 @@ docker compose up -d
 ```
 
 Die Scan-Daten werden persistent im `./data/` Ordner gespeichert.
+
+### Benutzer und Anmeldung
+
+Der Scanner hat eigene Benutzer. Beim ersten Aufruf legst du den ersten Benutzer an, er wird Admin und legt unter *Benutzer* weitere an. Jeder sieht nur seine eigenen Scans (`data/users/<id>/`).
+
+**Die Einrichtung ist für den ersten Aufrufer offen.** Richte den Scanner deshalb direkt nach dem ersten Start ein, bevor der Port für andere erreichbar ist. Ist `data/users.json` beschädigt oder nicht lesbar, startet der Scanner absichtlich nicht, statt die Einrichtung erneut zu öffnen.
+
+- Passwörter werden mit Argon2id gespeichert (`data/users.json`), Sitzungen nur als Hash (`data/sessions.json`), Mindestlänge 10 Zeichen.
+- Die Anmeldung bleibt 30 Tage bestehen und verlängert sich bei Nutzung. Nach mehreren Fehlversuchen wird der Login zeitweise gebremst.
+- Wer einen Benutzernamen kennt, kann dieses Konto durch gezieltes Falsch-Anmelden für höchstens 15 Minuten ausbremsen (kein hartes Sperren, damit niemand den Admin aussperren kann).
+- `SFGS_TRUST_PROXY=true` lässt den Scanner die Client-Adresse aus dem letzten `X-Forwarded-For`-Eintrag lesen und zusätzlich pro Adresse bremsen. Nur setzen, wenn der Port ausschließlich über deinen Proxy erreichbar ist, sonst kann ein Client den Header fälschen.
+- Das Sitzungs-Cookie ist `Secure`: Der Scanner ist für den Betrieb **hinter einem HTTPS-Reverse-Proxy** gedacht. Den Port nicht zusätzlich ohne Proxy ins Netz öffnen. Für lokale Tests über http geht `SFGS_COOKIE_SECURE=false`.
+- Scans aus Versionen vor 1.0.0 (direkt in `data/`) werden nicht mehr gelesen und können gelöscht werden.
 
 ### Aus dem Quellcode bauen
 
@@ -102,7 +115,7 @@ sfguild-scanner/
 
 ## Hinweise
 
-- Login-Daten werden **nur im RAM** gehalten, nie gespeichert
+- Die S&F-Zugangsdaten werden **nur im RAM** gehalten, nie gespeichert (Benutzerkonten des Scanners siehe oben)
 - Der Container braucht Zugang zu `sfgame.net` und `sso.playa-games.com`
 - Erster Build dauert 3-5 Min. (Rust kompiliert alle Dependencies)
 - Zwischen API-Requests wird 400-500ms Pause gehalten (Rate-Limiting)
