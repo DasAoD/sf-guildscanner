@@ -35,7 +35,7 @@ sf-guildscanner/
 6. Kampfsimulation (`/api/simulate`): per Hintergrund-Task, auch für nicht angreifbare Gilden aus der vollständigen Ehrenhalle-Ansicht
 
 ## Kampfsimulation
-- Angreifende Seite: nur aktive Mitglieder (<24h offline), Verteidiger: komplette Gilde. Aufstellung aufsteigend nach Level (Last-Man-Standing)
+- Angreifende Seite: nur kampfbereite Mitglieder (<24h online UND für den Angriff angemeldet, `battles_joined` = Attack/Both; Eingeladene `GuildRank::Invited` zählen nie), Verteidiger: komplette Gilde ohne Eingeladene. `MemberInfo.attack_joined` hält die Anmeldung Aufstellung aufsteigend nach Level (Last-Man-Standing)
 - Pilzkatapult (0–3 Pilze): pro Pilz ein zufälliges Ziel, 50 Prozentpunkte des ursprünglichen Lebens additiv (2 Treffer = 0 %). Ziele werden pro Einzelkampf neu gewürfelt, deshalb Loop mit `iterations=1` statt eines `simulate_battle`-Aufrufs
 - 2500 Iterationen als Default (wie sf-tools), `mushrooms` und `iterations` werden geclampt
 - Kampfwerte kommen per `ViewPlayer` (700 ms Pause, `SIM_VIEWPLAYER_DELAY_MS`) und werden gecacht: `own_fighters_cache` (ungültig bei Roster-Änderung, nach 6 h oder Charakterwechsel) und `enemy_fighters_cache` pro Gildenname (6 h, max. 100 Einträge)
