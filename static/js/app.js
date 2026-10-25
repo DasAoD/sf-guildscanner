@@ -12,7 +12,7 @@ let hasScanData=false, scanDate='';
 // jedem Neurendern verschwinden.
 let selected={rBody:new Set(),hofBody:new Set()};
 
-const PAGES=['character','overview','scan','results','hof','users','settings','help'];
+const PAGES=['character','overview','scan','results','hof','accounts','users','settings','help'];
 // Seiten, die einen gewählten Charakter (und damit eine Gilde) brauchen
 const NEEDS_GUILD=['overview','scan','results','hof'];
 const MUSH_ICON='<svg class="icon mush"><use href="#i-mush"/></svg>';
@@ -41,6 +41,7 @@ function route(){
   $('side').classList.remove('open');
   if(page==='users')loadUsers();
   if(page==='character')loadCharacterPage();
+  if(page==='accounts')loadAccounts();
   window.scrollTo(0,0);
 }
 function hostOf(url){
@@ -94,16 +95,27 @@ function showSso(){
   $('charCard').classList.add('hidden');
 }
 
-// Zeigt die Charakterliste, falls ein S&F-Login besteht, sonst das Anmeldeformular
+// Charakterliste aus den gespeicherten Konten; der einmalige Login ohne Speichern
+// bleibt als Rückfall (aufgeklappt, solange noch kein Konto hinterlegt ist).
 async function loadCharacterPage(){
+  let stored=[];
+  $('charErr').textContent='';
+  try{
+    const r=await api('accounts/characters');
+    if(r.success)stored=r.data; else $('charErr').textContent='Gespeicherte Konten konnten nicht gelesen werden: '+r.error;
+  }catch(e){/* ohne Antwort gibt es nur den manuellen Login */}
+  renderStored(stored);
+
+  let manual=null;
   try{
     const st=await api('status');
-    if(st.success&&st.data.logged_in){
+    if(st.success&&st.data.logged_in&&!st.data.account_id){
       const r=await api('characters');
-      if(r.success){showChars(r.data);return;}
+      if(r.success)manual=r.data;
     }
   }catch(e){/* ohne Antwort bleibt das Anmeldeformular */}
-  showSso();
+  if(manual)showChars(manual); else showSso();
+  $('manualBox').open=stored.length===0;
 }
 
 let activeChar=null;
@@ -152,12 +164,12 @@ function applyScanStatus(st){
 
 async function selectChar(idx){
   $('charList').querySelectorAll('button').forEach(b=>b.disabled=true);
-  // Stand eines evtl. vorher gewählten Charakters (bei Charakterwechsel)
-  // nicht mit rüberschleppen.
-  resetResults();
   try{
     const r=await api('select-character',{index:idx});
     if(!r.success){alert(r.error);return;}
+    // Stand eines vorher gewählten Charakters (bei Charakterwechsel)
+    // nicht mit rüberschleppen.
+    resetResults();
     const c=charsList.find(x=>x.index===idx);
     activeChar=c?{name:c.name,server:hostOf(c.server)}:null;
     showGuild(r.data);
@@ -846,6 +858,162 @@ async function boot(){
     if(!r.data.user){showAuth('login');return;}
     enterApp(r.data.user);
   }catch(e){showAuth('login');}
+}
+
+// ── GESPEICHERTE KONTEN ────────────────────────────────────
+let accountsInfo=null;
+
+function guildText(c){
+  if(c.guild===null||c.guild===undefined)return 'Gilde unbekannt';
+  return c.guild?c.guild:'keine Gilde';
+}
+
+function isActiveChar(c){
+  return !!activeChar&&activeChar.name===c.name&&activeChar.server===c.server;
+}
+
+function renderStored(list){
+  $('storedCard').classList.toggle('hidden',!list.length);
+  $('noAccountsHint').classList.toggle('hidden',list.length>0);
+  const l=$('storedList'); l.innerHTML='';
+  list.forEach(c=>{
+    const b=document.createElement('button');
+    b.type='button';
+    b.className='charcard'+(isActiveChar(c)?' on':'');
+    b.innerHTML=`<b>${esc(c.name)}</b><small>${esc(c.server)} · ${esc(guildText(c))} · Konto ${esc(c.account)}</small>`;
+    b.onclick=()=>selectStored(c);
+    l.appendChild(b);
+  });
+}
+
+async function selectStored(c){
+  const btns=$('storedList').querySelectorAll('button'); btns.forEach(b=>b.disabled=true);
+  try{
+    const r=await api('accounts/select',{account_id:c.account_id,name:c.name,server:c.server});
+    if(!r.success){alert(r.error);return;}
+    // Stand eines vorher gewählten Charakters nicht mitschleppen.
+    resetResults();
+    activeChar={name:c.name,server:c.server};
+    showGuild(r.data);
+    goPage('overview');
+    const st=await api('status');
+    applyScanStatus(st.data);
+  }catch(e){alert('Fehler: '+e.message);}
+  finally{btns.forEach(b=>b.disabled=false);}
+}
+
+async function loadAccounts(){
+  let r;
+  try{r=await api('accounts');}catch(e){r={success:false,error:e.message};}
+  if(!r.success){
+    $('accountsList').innerHTML=`<div class="card err">Konten konnten nicht gelesen werden: ${esc(r.error||'')}</div>`;
+    return;
+  }
+  accountsInfo=r.data;
+  $('keyWarn').classList.toggle('hidden',r.data.key_set);
+  $('accAddCard').classList.toggle('hidden',!r.data.key_set);
+  renderAccounts();
+}
+
+const openAccs=new Set();
+let accsSeen=false;
+
+function renderAccounts(){
+  const box=$('accountsList'); box.innerHTML='';
+  if(!accountsInfo.accounts.length){
+    box.innerHTML='<div class="card empty">Noch keine Konten hinterlegt.</div>';
+    return;
+  }
+  // Beim ersten Anzeigen nur dann aufgeklappt, wenn es genau ein Konto gibt.
+  if(!accsSeen){
+    accsSeen=true;
+    if(accountsInfo.accounts.length===1)openAccs.add(accountsInfo.accounts[0].id);
+  }
+  accountsInfo.accounts.forEach(a=>{
+    const card=document.createElement('div');
+    card.className='card acc';
+    const chars=a.characters.map(c=>`<label class="char${c.active?' on':''}"><span><b>${esc(c.name)}</b><small>${esc(c.server)} · ${esc(guildText(c))}</small></span><span class="check"><input type="checkbox" data-name="${esc(c.name)}" data-server="${esc(c.server)}" ${c.active?'checked':''}></span></label>`).join('');
+    const open=openAccs.has(a.id);
+    const activeCount=a.characters.filter(c=>c.active).length;
+    card.innerHTML=`<div class="acc-head"><h3 style="margin:0"><button class="acc-toggle" type="button" aria-expanded="${open}"><span class="chev" aria-hidden="true">${open?'▾':'▸'}</span>${esc(a.sso_user)}<span class="hint">${activeCount} von ${a.characters.length} aktiv</span></button></h3><span class="hint" data-msg></span><span class="grow" style="flex:1"></span>
+        <button class="btn sec small" type="button" data-act="refresh">Gilden aktualisieren</button>
+        <button class="btn sec small" type="button" data-act="password">Passwort ändern</button>
+        <button class="btn red small" type="button" data-act="delete">Entfernen</button></div>
+      <div class="acc-body${open?'':' hidden'}">
+      <p class="hint">Haken = Charakter ist für Scan und Simulation nutzbar und erscheint unter "Charakter wechseln".</p>
+      <div class="chars">${chars}</div>
+      <div class="row" style="margin-top:0.7rem"><button class="btn" type="button" data-act="save">Auswahl speichern</button></div></div>`;
+    card.querySelector('.acc-toggle').addEventListener('click',e=>{
+      const t=e.currentTarget, body=card.querySelector('.acc-body'), show=body.classList.contains('hidden');
+      body.classList.toggle('hidden',!show);
+      if(show)openAccs.add(a.id); else openAccs.delete(a.id);
+      t.setAttribute('aria-expanded',show);
+      t.querySelector('.chev').textContent=show?'▾':'▸';
+    });
+    card.querySelectorAll('.char input').forEach(i=>i.addEventListener('change',()=>i.closest('.char').classList.toggle('on',i.checked)));
+    card.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>accountAction(a,b.dataset.act,card)));
+    box.appendChild(card);
+  });
+}
+
+function replaceAccount(view){
+  accountsInfo.accounts=accountsInfo.accounts.map(a=>a.id===view.id?view:a);
+  renderAccounts();
+}
+
+async function accountAction(a,act,card){
+  const msg=card.querySelector('[data-msg]');
+  const busy=on=>card.querySelectorAll('button').forEach(b=>{b.disabled=on;});
+  try{
+    if(act==='save'||act==='refresh'){
+      const body=act==='save'
+        ?{id:a.id,active:[...card.querySelectorAll('.char input:checked')].map(i=>({name:i.dataset.name,server:i.dataset.server}))}
+        :{id:a.id};
+      busy(true); msg.textContent='Bitte warten, die Gilden werden beim Spiel abgefragt...';
+      const r=await api(act==='save'?'accounts/activate':'accounts/refresh',body);
+      if(!r.success){busy(false); msg.textContent='Fehler: '+r.error; return;}
+      replaceAccount(r.data);
+    }else if(act==='password'){
+      openAccPwModal(a);
+    }else if(act==='delete'){
+      if(!confirm(`Konto "${a.sso_user}" samt gespeichertem Passwort entfernen?`))return;
+      const r=await api('accounts/delete',{id:a.id});
+      if(!r.success){alert(r.error);return;}
+      openAccs.delete(a.id);
+      const st=await api('status');
+      if(st.success&&!st.data.guild_loaded&&ownGuild){location.reload();return;}
+      await loadAccounts();
+    }
+  }catch(e){busy(false); msg.textContent='Fehler: '+e.message;}
+}
+
+function openAccPwModal(a){
+  $('mTitle').textContent=`Passwort ändern: ${a.sso_user}`;
+  $('mBody').innerHTML=`<div class="form" style="grid-template-columns:1fr"><div class="field"><label for="accNewPw">Neues S&F-Passwort</label><input type="password" id="accNewPw" autocomplete="new-password"></div></div>
+    <button class="btn" type="button" id="accNewPwBtn">Prüfen und speichern</button> <span class="hint" id="accNewPwMsg">Das Passwort wird beim Spiel geprüft.</span>`;
+  $('modal').classList.remove('hidden');
+  $('accNewPwBtn').onclick=async()=>{
+    $('accNewPwBtn').disabled=true; $('accNewPwMsg').textContent='Prüfe...';
+    const r=await api('accounts/password',{id:a.id,password:$('accNewPw').value});
+    $('accNewPwMsg').textContent=r.success?'Gespeichert.':'Fehler: '+r.error;
+    $('accNewPwBtn').disabled=false;
+    if(r.success)setTimeout(()=>$('modal').classList.add('hidden'),900);
+  };
+}
+
+async function addAccount(){
+  const sso_user=$('accUser').value.trim(), password=$('accPass').value;
+  if(!sso_user||!password)return;
+  $('accAddBtn').disabled=true; $('accAddMsg').textContent='Prüfe das Konto beim Spiel...';
+  try{
+    const r=await api('accounts/add',{sso_user,password});
+    if(!r.success){$('accAddMsg').textContent='Fehler: '+r.error;return;}
+    $('accUser').value=''; $('accPass').value='';
+    openAccs.add(r.data.id);
+    $('accAddMsg').textContent=`Konto "${r.data.sso_user}" gespeichert. Aktiviere jetzt die Charaktere, mit denen du arbeiten willst.`;
+    await loadAccounts();
+  }catch(e){$('accAddMsg').textContent='Fehler: '+e.message;}
+  finally{$('accAddBtn').disabled=false;}
 }
 
 // ── BENUTZERVERWALTUNG (Admin) ─────────────────────────────

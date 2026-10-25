@@ -12,4 +12,7 @@ services:
       - RUST_LOG=info
       # true, wenn der Scanner hinter einem eigenen HTTPS-Reverse-Proxy steht
       - SFGS_TRUST_PROXY=false
+      # Schlüssel für gespeicherte S&F-Passwörter (mind. 32 zufällige Zeichen, z.B. `openssl rand -base64 32`).
+      # Ohne ihn ist das Speichern von Konten gesperrt. Nicht ändern, sonst sind gespeicherte Passwörter unbrauchbar.
+      # - SFGS_KEY=
     restart: unless-stopped

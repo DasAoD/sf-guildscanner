@@ -1,6 +1,6 @@
 # sf-guildscanner – Projektkontext für Claude Code
 
-- S&F-Zugangsdaten nur im RAM halten, nie speichern.
+- S&F-Passwörter nur verschlüsselt (AES-256-GCM, Schlüssel `SFGS_KEY`, `accounts.rs`) in `data/users/<id>/accounts.json` ablegen; nie im Klartext, in Logs oder API-Antworten. Beim manuellen Login ohne Speichern bleiben sie im RAM.
 - Alle `/api/*`-Endpunkte außer `auth/*` und `version` brauchen eine Sitzung (`Ctx`-Extractor in `main.rs`, Logik in `auth.rs`). Jeder Benutzer hat eigenen `AppHandles`-Zustand und Datenordner `data/users/<id>/`; neue Handler nehmen `Ctx(handles, user)`, nie einen globalen Zustand.
 - Pausen zwischen API-Requests beibehalten: 250 ms (HoF-Seiten), 400 ms (ViewGuild), 700 ms (ViewPlayer in der Simulation).
 - `AppState` ist während jedes Spielserver-Requests gesperrt, weil die `SimpleSession` darin liegt. Fortschritts- und Abbruch-Felder gehören in `ProgressState` (`AppHandles`), nicht nach `AppState`, sonst hängen `/api/progress` und die Abbruch-Endpunkte hinter dem laufenden Request.

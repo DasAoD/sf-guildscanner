@@ -1,3 +1,4 @@
+mod accounts;
 mod auth;
 
 use std::collections::HashMap;
@@ -12,6 +13,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use accounts::{Account, AccountView, Crypto, StoredChar};
 use auth::{Auth, AuthUser, LoginError};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -144,6 +146,8 @@ struct DetailedGuild {
 struct AppState {
     sessions: Vec<SimpleSession>,
     selected: Option<usize>,
+    /// Gespeichertes Konto, dessen Charaktere in `sessions` geladen sind (`None` = manueller Login)
+    account_id: Option<String>,
     own_guild: Option<OwnGuild>,
     scan_data: Option<ScanData>,
     /// Scan settings for the next run
@@ -277,8 +281,11 @@ struct AppHandles {
     state: SharedState,
     progress: SharedProgress,
     meta: SharedMeta,
-    /// Datenordner dieses Benutzers (Scans und Verlauf)
+    /// Datenordner dieses Benutzers (Scans, Verlauf, Konten)
     user_dir: String,
+    user_id: String,
+    /// Schlüssel für gespeicherte S&F-Zugangsdaten (`None`, wenn SFGS_KEY fehlt)
+    crypto: Option<Arc<Crypto>>,
 }
 
 /// Zustand für alle Benutzer: Anmeldung, pro Benutzer ein eigener
@@ -290,12 +297,14 @@ struct Shared {
     meta: SharedMeta,
     /// X-Forwarded-For auswerten (Scanner steht hinter einem eigenen Reverse-Proxy)
     trust_proxy: bool,
+    crypto: Option<Arc<Crypto>>,
 }
 
 fn new_app_state() -> AppState {
     AppState {
         sessions: Vec::new(),
         selected: None,
+        account_id: None,
         own_guild: None,
         scan_data: None,
         scan_settings: ScanSettings::default(),
@@ -315,6 +324,8 @@ impl Shared {
                 progress: Arc::new(Mutex::new(ProgressState::default())),
                 meta: self.meta.clone(),
                 user_dir: format!("{}/users/{}", DATA_DIR, user_id),
+                user_id: user_id.to_string(),
+                crypto: self.crypto.clone(),
             })
             .clone()
     }
@@ -778,6 +789,7 @@ async fn login(
             {
                 let mut app = handles.state.lock().await;
                 app.sessions = sessions;
+                app.account_id = None;
                 app.selected = None;
                 app.own_guild = None;
                 app.scan_data = None;
@@ -824,6 +836,388 @@ async fn list_characters(Ctx(handles, _user): Ctx) -> impl IntoResponse {
         .collect();
 
     Ok(ok_response(chars))
+}
+
+// ── Gespeicherte S&F-Konten ───────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct AccountsInfo {
+    /// Ist SFGS_KEY gesetzt? Ohne Schlüssel lassen sich keine Konten speichern.
+    key_set: bool,
+    accounts: Vec<AccountView>,
+}
+
+/// Aktivierter Charakter für die Charakterliste
+#[derive(Serialize)]
+struct StoredCharacter {
+    account_id: String,
+    account: String,
+    name: String,
+    server: String,
+    guild: Option<String>,
+}
+
+const MAX_ACCOUNTS_PER_USER: usize = 10;
+
+fn session_host(s: &SimpleSession) -> String {
+    s.server_url().host_str().unwrap_or_default().to_string()
+}
+
+/// Meldet das Konto mit dem gespeicherten Passwort beim Spiel an.
+async fn account_sessions(handles: &AppHandles, acc: &Account) -> Result<Vec<SimpleSession>, String> {
+    let crypto = handles.crypto.as_ref().ok_or("SFGS_KEY ist nicht gesetzt")?;
+    let password = crypto.decrypt(&accounts::aad(&handles.user_id, &acc.id), acc.secret())?;
+    SimpleSession::login_sf_account(&acc.sso_user, &password)
+        .await
+        .map_err(|e| format!("Login fehlgeschlagen: {:?}", e))
+}
+
+/// Gildenname je gewünschtem Charakter (`""` = keine Gilde), eine Anfrage pro
+/// Charakter mit Pause dazwischen.
+async fn fetch_guilds(
+    handles: &AppHandles,
+    acc: &Account,
+    wanted: &[(String, String)],
+) -> Result<(Vec<(String, String, String)>, Vec<(String, String)>), String> {
+    let sessions = account_sessions(handles, acc).await?;
+    let current: Vec<(String, String)> = sessions.iter().map(|s| (s.username().to_string(), session_host(s))).collect();
+    let mut out = Vec::new();
+    let mut calls = 0;
+    for mut s in sessions {
+        let key = (s.username().to_string(), session_host(&s));
+        if !wanted.contains(&key) {
+            continue;
+        }
+        if calls > 0 {
+            tokio::time::sleep(Duration::from_millis(SIM_VIEWPLAYER_DELAY_MS)).await;
+        }
+        calls += 1;
+        match s.send_command(Command::Update).await {
+            Ok(gs) => {
+                let guild = gs.guild.as_ref().map(|g| g.name.clone()).unwrap_or_default();
+                out.push((key.0, key.1, guild));
+            }
+            Err(e) => log::warn!("Gilde von '{}' konnte nicht geladen werden: {:?}", key.0, e),
+        }
+    }
+    Ok((out, current))
+}
+
+fn store_guilds(dir: &str, id: &str, guilds: Vec<(String, String, String)>) -> Result<(), String> {
+    accounts::update(dir, |accs| {
+        let acc = accs.iter_mut().find(|a| a.id == id).ok_or("Konto nicht gefunden")?;
+        for (name, server, guild) in guilds {
+            if let Some(c) = acc.characters.iter_mut().find(|c| c.name == name && c.server == server) {
+                c.guild = Some(guild);
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Charakterliste des Kontos mit dem Spiel abgleichen: neue Charaktere kommen
+/// (inaktiv) dazu, nicht mehr vorhandene entfallen; Aktivierung und Gilde bleiben.
+fn sync_characters(dir: &str, id: &str, current: &[(String, String)]) -> Result<(), String> {
+    accounts::update(dir, |accs| {
+        let acc = accs.iter_mut().find(|a| a.id == id).ok_or("Konto nicht gefunden")?;
+        acc.characters.retain(|c| current.iter().any(|(n, s)| *n == c.name && *s == c.server));
+        for (name, server) in current {
+            if !acc.characters.iter().any(|c| c.name == *name && c.server == *server) {
+                acc.characters.push(StoredChar { name: name.clone(), server: server.clone(), guild: None, active: false });
+            }
+        }
+        Ok(())
+    })
+}
+
+fn view_of(dir: &str, id: &str) -> Result<AccountView, String> {
+    let accs = accounts::load(dir)?;
+    accs.iter().find(|a| a.id == id).map(AccountView::from).ok_or_else(|| "Konto nicht gefunden".to_string())
+}
+
+/// GET /api/accounts
+async fn accounts_list(Ctx(handles, _user): Ctx) -> Result<Json<ApiResponse<AccountsInfo>>, ApiErr> {
+    let accs = accounts::load(&handles.user_dir).map_err(|e| err_response::<String>(&e))?;
+    Ok(ok_response(AccountsInfo {
+        key_set: handles.crypto.is_some(),
+        accounts: accs.iter().map(AccountView::from).collect(),
+    }))
+}
+
+#[derive(Deserialize)]
+struct NewAccount {
+    sso_user: String,
+    password: String,
+}
+
+/// POST /api/accounts/add – Konto prüfen (Login) und verschlüsselt speichern
+async fn accounts_add(Ctx(handles, _user): Ctx, Json(req): Json<NewAccount>) -> Result<Json<ApiResponse<AccountView>>, ApiErr> {
+    let Some(crypto) = handles.crypto.clone() else {
+        return Err(err_response::<String>("Speichern ist gesperrt: SFGS_KEY ist nicht gesetzt"));
+    };
+    let sso_user = req.sso_user.trim().to_string();
+    if sso_user.is_empty() || req.password.is_empty() || sso_user.len() > 200 || req.password.len() > 200 {
+        return Err(err_response::<String>("Benutzername und Passwort angeben"));
+    }
+    let existing = accounts::load(&handles.user_dir).map_err(|e| err_response::<String>(&e))?;
+    if existing.len() >= MAX_ACCOUNTS_PER_USER {
+        return Err(err_response::<String>("Zu viele Konten hinterlegt"));
+    }
+    if existing.iter().any(|a| a.sso_user.eq_ignore_ascii_case(&sso_user)) {
+        return Err(err_response::<String>("Dieses Konto ist schon hinterlegt"));
+    }
+
+    log::info!("SSO login for new stored account: {}", sso_user);
+    let sessions = SimpleSession::login_sf_account(&sso_user, &req.password)
+        .await
+        .map_err(|e| err_response::<String>(&format!("Login fehlgeschlagen: {:?}", e)))?;
+    let characters: Vec<StoredChar> = sessions
+        .iter()
+        .map(|s| StoredChar { name: s.username().to_string(), server: session_host(s), guild: None, active: false })
+        .collect();
+
+    let id = accounts::new_id();
+    let secret = crypto
+        .encrypt(&accounts::aad(&handles.user_id, &id), &req.password)
+        .map_err(|e| err_response::<String>(&e))?;
+    let acc = Account::new(id, sso_user, secret, characters);
+    let view = AccountView::from(&acc);
+    accounts::update(&handles.user_dir, move |accs| {
+        if accs.len() >= MAX_ACCOUNTS_PER_USER {
+            return Err("Zu viele Konten hinterlegt".to_string());
+        }
+        if accs.iter().any(|a| a.sso_user.eq_ignore_ascii_case(&acc.sso_user)) {
+            return Err("Dieses Konto ist schon hinterlegt".to_string());
+        }
+        accs.push(acc);
+        Ok(())
+    })
+    .map_err(|e| err_response::<String>(&e))?;
+    Ok(ok_response(view))
+}
+
+#[derive(Deserialize)]
+struct CharKey {
+    name: String,
+    server: String,
+}
+
+#[derive(Deserialize)]
+struct ActivateReq {
+    id: String,
+    active: Vec<CharKey>,
+}
+
+/// POST /api/accounts/activate – legt fest, welche Charaktere des Kontos nutzbar
+/// sind; die Gilde neu aktivierter Charaktere wird einmal geholt.
+async fn accounts_activate(Ctx(handles, _user): Ctx, Json(req): Json<ActivateReq>) -> Result<Json<ApiResponse<AccountView>>, ApiErr> {
+    let acc = accounts::update(&handles.user_dir, |accs| {
+        let acc = accs.iter_mut().find(|a| a.id == req.id).ok_or("Konto nicht gefunden")?;
+        for c in acc.characters.iter_mut() {
+            c.active = req.active.iter().any(|k| k.name == c.name && k.server == c.server);
+        }
+        Ok(acc.clone())
+    })
+    .map_err(|e| err_response::<String>(&e))?;
+
+    let missing: Vec<(String, String)> = acc
+        .characters
+        .iter()
+        .filter(|c| c.active && c.guild.is_none())
+        .map(|c| (c.name.clone(), c.server.clone()))
+        .collect();
+    if !missing.is_empty() {
+        let (guilds, _) = fetch_guilds(&handles, &acc, &missing).await.map_err(|e| err_response::<String>(&e))?;
+        store_guilds(&handles.user_dir, &acc.id, guilds).map_err(|e| err_response::<String>(&e))?;
+    }
+    view_of(&handles.user_dir, &acc.id).map(ok_response).map_err(|e| err_response::<String>(&e))
+}
+
+#[derive(Deserialize)]
+struct AccountId {
+    id: String,
+}
+
+/// POST /api/accounts/refresh – Gilden aller aktiven Charaktere des Kontos neu holen
+async fn accounts_refresh(Ctx(handles, _user): Ctx, Json(req): Json<AccountId>) -> Result<Json<ApiResponse<AccountView>>, ApiErr> {
+    let accs = accounts::load(&handles.user_dir).map_err(|e| err_response::<String>(&e))?;
+    let acc = accs.iter().find(|a| a.id == req.id).ok_or_else(|| err_response::<String>("Konto nicht gefunden"))?;
+    let wanted: Vec<(String, String)> = acc
+        .characters
+        .iter()
+        .filter(|c| c.active)
+        .map(|c| (c.name.clone(), c.server.clone()))
+        .collect();
+    let (guilds, current) = fetch_guilds(&handles, acc, &wanted).await.map_err(|e| err_response::<String>(&e))?;
+    store_guilds(&handles.user_dir, &acc.id, guilds).map_err(|e| err_response::<String>(&e))?;
+    sync_characters(&handles.user_dir, &acc.id, &current).map_err(|e| err_response::<String>(&e))?;
+    view_of(&handles.user_dir, &acc.id).map(ok_response).map_err(|e| err_response::<String>(&e))
+}
+
+#[derive(Deserialize)]
+struct AccountPassword {
+    id: String,
+    password: String,
+}
+
+/// POST /api/accounts/password – gespeichertes Passwort ersetzen (nach Login-Prüfung)
+async fn accounts_password(Ctx(handles, _user): Ctx, Json(req): Json<AccountPassword>) -> Result<Json<ApiResponse<&'static str>>, ApiErr> {
+    let Some(crypto) = handles.crypto.clone() else {
+        return Err(err_response::<String>("Speichern ist gesperrt: SFGS_KEY ist nicht gesetzt"));
+    };
+    if req.password.is_empty() || req.password.len() > 200 {
+        return Err(err_response::<String>("Passwort angeben"));
+    }
+    let accs = accounts::load(&handles.user_dir).map_err(|e| err_response::<String>(&e))?;
+    let acc = accs.iter().find(|a| a.id == req.id).ok_or_else(|| err_response::<String>("Konto nicht gefunden"))?;
+    SimpleSession::login_sf_account(&acc.sso_user, &req.password)
+        .await
+        .map_err(|e| err_response::<String>(&format!("Login fehlgeschlagen: {:?}", e)))?;
+    let secret = crypto
+        .encrypt(&accounts::aad(&handles.user_id, &acc.id), &req.password)
+        .map_err(|e| err_response::<String>(&e))?;
+    let id = acc.id.clone();
+    accounts::update(&handles.user_dir, move |accs| {
+        accs.iter_mut().find(|a| a.id == id).ok_or("Konto nicht gefunden")?.set_secret(secret);
+        Ok(())
+    })
+    .map_err(|e| err_response::<String>(&e))?;
+    Ok(ok_response("Passwort gespeichert"))
+}
+
+/// POST /api/accounts/delete
+async fn accounts_delete(Ctx(handles, _user): Ctx, Json(req): Json<AccountId>) -> Result<Json<ApiResponse<&'static str>>, ApiErr> {
+    accounts::update(&handles.user_dir, |accs| {
+        let before = accs.len();
+        accs.retain(|a| a.id != req.id);
+        if accs.len() == before {
+            return Err("Konto nicht gefunden".to_string());
+        }
+        Ok(())
+    })
+    .map_err(|e| err_response::<String>(&e))?;
+    let active = handles.state.lock().await.account_id.clone();
+    if active.as_deref() == Some(req.id.as_str()) {
+        clear_sso(&handles).await;
+    }
+    Ok(ok_response("Konto entfernt"))
+}
+
+/// GET /api/accounts/characters – alle aktivierten Charaktere aller Konten
+async fn accounts_characters(Ctx(handles, _user): Ctx) -> Result<Json<ApiResponse<Vec<StoredCharacter>>>, ApiErr> {
+    let accs = accounts::load(&handles.user_dir).map_err(|e| err_response::<String>(&e))?;
+    let list = accs
+        .iter()
+        .flat_map(|a| {
+            a.characters.iter().filter(|c| c.active).map(move |c| StoredCharacter {
+                account_id: a.id.clone(),
+                account: a.sso_user.clone(),
+                name: c.name.clone(),
+                server: c.server.clone(),
+                guild: c.guild.clone(),
+            })
+        })
+        .collect();
+    Ok(ok_response(list))
+}
+
+#[derive(Deserialize)]
+struct SelectStored {
+    account_id: String,
+    name: String,
+    server: String,
+}
+
+/// POST /api/accounts/select – Charakter eines gespeicherten Kontos wählen; meldet
+/// sich bei Bedarf mit den gespeicherten Zugangsdaten beim Spiel an.
+async fn accounts_select(Ctx(handles, user): Ctx, Json(req): Json<SelectStored>) -> Response {
+    let accs = match accounts::load(&handles.user_dir) {
+        Ok(a) => a,
+        Err(e) => return err_response::<OwnGuild>(&e).into_response(),
+    };
+    let Some(acc) = accs.iter().find(|a| a.id == req.account_id) else {
+        return err_response::<OwnGuild>("Konto nicht gefunden").into_response();
+    };
+    if !acc.characters.iter().any(|c| c.active && c.name == req.name && c.server == req.server) {
+        return err_response::<OwnGuild>("Charakter ist nicht aktiviert").into_response();
+    }
+
+    // Beim ersten Versuch wird eine schon geladene Spielsitzung des Kontos
+    // weiterverwendet. Schlägt die Wahl damit fehl (z.B. Sitzung abgelaufen),
+    // gibt es genau einen zweiten Versuch mit frischem Login.
+    let mut fresh = false;
+    loop {
+        let loaded = !fresh && {
+            let app = handles.state.lock().await;
+            app.account_id.as_deref() == Some(acc.id.as_str()) && !app.sessions.is_empty()
+        };
+        if !loaded {
+            let sessions = match account_sessions(&handles, acc).await {
+                Ok(s) => s,
+                Err(e) => return err_response::<OwnGuild>(&e).into_response(),
+            };
+            // Sitzung erst ersetzen, wenn jetzt (nach dem langen Login) kein Scan
+            // und keine Simulation läuft; Sperrreihenfolge wie in select_character.
+            let mut app = handles.state.lock().await;
+            let mut p = handles.progress.lock().await;
+            if p.scan.running || p.sim.running {
+                return err_response::<OwnGuild>("Es läuft gerade ein Scan oder eine Simulation").into_response();
+            }
+            app.sessions = sessions;
+            app.account_id = Some(acc.id.clone());
+            app.selected = None;
+            app.own_guild = None;
+            app.scan_data = None;
+            app.own_fighters_cache = None;
+            app.enemy_fighters_cache.clear();
+            p.scan = ScanProgress::default();
+            p.sim = SimProgress::default();
+        } else {
+            let p = handles.progress.lock().await;
+            if p.scan.running || p.sim.running {
+                return err_response::<OwnGuild>("Es läuft gerade ein Scan oder eine Simulation").into_response();
+            }
+        }
+
+        let index = {
+            let app = handles.state.lock().await;
+            app.sessions.iter().position(|s| s.username() == req.name && session_host(s) == req.server)
+        };
+        let Some(index) = index else {
+            if loaded {
+                fresh = true;
+                continue;
+            }
+            return err_response::<OwnGuild>("Charakter wurde im Konto nicht gefunden").into_response();
+        };
+
+        let resp = select_character(Ctx(handles.clone(), user.clone()), Json(SelectCharRequest { index }))
+            .await
+            .into_response();
+        if resp.status().is_success() {
+            // Gilde und Auswahl aus demselben Lock lesen, damit ein paralleler Wechsel
+            // nicht die Gilde eines anderen Charakters hier einträgt.
+            let guild = {
+                let app = handles.state.lock().await;
+                if app.selected == Some(index) {
+                    app.own_guild.as_ref().map(|g| g.name.clone())
+                } else {
+                    None
+                }
+            };
+            if let Some(g) = guild {
+                if let Err(e) = store_guilds(&handles.user_dir, &acc.id, vec![(req.name.clone(), req.server.clone(), g)]) {
+                    log::warn!("Gilde konnte nicht gespeichert werden: {}", e);
+                }
+            }
+            return resp;
+        }
+        if loaded && !fresh {
+            fresh = true;
+            continue;
+        }
+        return resp;
+    }
 }
 
 /// POST /api/select-character
@@ -1954,6 +2348,7 @@ async fn status(Ctx(handles, _user): Ctx) -> impl IntoResponse {
         own_guild: Option<OwnGuild>,
         character_name: Option<String>,
         character_server: Option<String>,
+        account_id: Option<String>,
     }
 
     let session = app.selected.and_then(|i| app.sessions.get(i));
@@ -1968,6 +2363,7 @@ async fn status(Ctx(handles, _user): Ctx) -> impl IntoResponse {
         own_guild: app.own_guild.clone(),
         character_name: session.map(|s| s.username().to_string()),
         character_server: session.and_then(|s| s.server_url().host_str().map(str::to_string)),
+        account_id: app.account_id.clone(),
     })
 }
 
@@ -1982,6 +2378,7 @@ async fn clear_sso(handles: &AppHandles) {
     {
         let mut app = handles.state.lock().await;
         app.sessions.clear();
+        app.account_id = None;
         app.selected = None;
         app.own_guild = None;
         app.scan_data = None;
@@ -2657,8 +3054,13 @@ async fn main() {
     if auth.needs_setup() {
         log::warn!("Noch kein Benutzer vorhanden: Die Einrichtung (erster Admin) ist über die Weboberfläche offen, bitte sofort durchführen");
     }
+    let crypto = Crypto::from_env().map(Arc::new);
+    if crypto.is_none() {
+        log::warn!("SFGS_KEY ist nicht gesetzt: S&F-Konten lassen sich nicht speichern (Schlüssel mit mindestens 32 Zeichen setzen)");
+    }
     let shared = Shared {
         auth,
+        crypto,
         users: Arc::new(Mutex::new(HashMap::new())),
         meta,
         trust_proxy: std::env::var("SFGS_TRUST_PROXY").map(|v| v == "true").unwrap_or(false),
@@ -2668,6 +3070,14 @@ async fn main() {
         .route("/api/login", post(login))
         .route("/api/characters", get(list_characters))
         .route("/api/select-character", post(select_character))
+        .route("/api/accounts", get(accounts_list))
+        .route("/api/accounts/add", post(accounts_add))
+        .route("/api/accounts/activate", post(accounts_activate))
+        .route("/api/accounts/refresh", post(accounts_refresh))
+        .route("/api/accounts/password", post(accounts_password))
+        .route("/api/accounts/delete", post(accounts_delete))
+        .route("/api/accounts/characters", get(accounts_characters))
+        .route("/api/accounts/select", post(accounts_select))
         .route("/api/scan", post(start_scan))
         .route("/api/scan/abort", post(abort_scan))
         .route("/api/progress", get(get_progress))
