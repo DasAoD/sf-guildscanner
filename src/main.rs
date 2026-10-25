@@ -838,8 +838,15 @@ async fn run_scan(handles: AppHandles) -> Result<(), String> {
             let in_rank_window = if settings.full_up_scan {
                 hg.rank != own_rank && hg.rank <= rank_down_end
             } else {
+                // Ränge über dem 20er-Fenster, die auf page_low liegen, gehören
+                // der Zusatzphase nicht mehr (die startet erst bei page_low - 1)
+                // und würden sonst nie ehre-geprüft (z.B. #101-#105 bei Rang #126).
+                let above_by_honor = settings.honor_up_scan
+                    && hg.rank < rank_up_start
+                    && hg.honor <= own_honor.saturating_add(3000);
                 (hg.rank >= rank_up_start && hg.rank < own_rank)
                     || (hg.rank > own_rank && hg.rank <= rank_down_end)
+                    || above_by_honor
             };
 
             if !in_rank_window {
