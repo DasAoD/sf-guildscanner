@@ -15,7 +15,9 @@
 //!   STRIDE         — Positionsschritt pro Seite (optional, default 50;
 //!                    51 = Verhalten von sf-api's HallOfFameGroupPage, bei dem
 //!                    der letzte Rang jeder Seite fehlt)
-//!   FIND           — Gildenname, der in den Seiten gesucht wird (optional)
+//!   FIND           — Gildenname (Teilstring, Groß-/Kleinschreibung egal), der
+//!                    in den Seiten gesucht wird (optional)
+//!   RANK           — Rang, dessen Eintrag ausgegeben wird (optional)
 
 use std::{env, time::Duration};
 
@@ -47,7 +49,8 @@ async fn main() {
     let character = need_env("CHARACTER");
     let first: u32 = opt_env("FIRST_PAGE").and_then(|v| v.parse().ok()).unwrap_or(0);
     let last: u32 = opt_env("LAST_PAGE").and_then(|v| v.parse().ok()).unwrap_or(3);
-    let find = opt_env("FIND");
+    let find = opt_env("FIND").map(|f| f.trim().to_lowercase());
+    let rank: Option<u32> = opt_env("RANK").and_then(|v| v.parse().ok());
     let stride: u32 = opt_env("STRIDE").and_then(|v| v.parse().ok()).unwrap_or(50);
 
     let mut sessions = match SimpleSession::login_sf_account(&sso_user, &sso_pass).await {
@@ -99,9 +102,10 @@ async fn main() {
         );
         for g in guilds {
             all_ranks.push(g.rank);
-            if find.as_deref().is_some_and(|f| g.name == f) {
+            let by_name = find.as_deref().is_some_and(|f| g.name.to_lowercase().contains(f));
+            if by_name || rank == Some(g.rank) {
                 println!(
-                    "  GEFUNDEN: #{} {} (Leiter {}, {} Mitglieder, Ehre {})",
+                    "  GEFUNDEN: #{} {:?} (Leiter {:?}, {} Mitglieder, Ehre {})",
                     g.rank, g.name, g.leader, g.member_count, g.honor
                 );
             }
