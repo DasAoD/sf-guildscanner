@@ -176,3 +176,6 @@ details p + p { padding-top: 0; }
 }
 .colmenu .menu[hidden] { display: none; }
 .colhide { display: none; }
+
+.upd { display: inline-block; margin-top: 0.4rem; font-size: 0.72rem; font-weight: 700; color: #1a1304; background: var(--gold); border-radius: 10px; padding: 0.1rem 0.6rem; text-decoration: none; }
+.upd:hover { background: #ffe08a; }
